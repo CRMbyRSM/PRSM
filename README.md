@@ -15,7 +15,7 @@ A desktop client for OpenClaw AI assistant. Built with Electron, React, and Type
 
 ## Screenshots
 
-Open `ui-prototype/index.html` in a browser to preview the UI design.
+*Coming soon*
 
 ## Installation
 
@@ -117,26 +117,30 @@ Building Windows packages from Linux/WSL requires Wine. For best results:
 
 ```
 clawcontrol/
-├── electron/           # Electron main process
-│   ├── main.ts        # Main process entry
-│   └── preload.ts     # Preload script (IPC bridge)
+├── electron/              # Electron main process
+│   ├── main.ts            # Main process entry
+│   └── preload.ts         # Preload script (IPC bridge)
 ├── src/
-│   ├── components/    # React components
+│   ├── components/        # React components
 │   │   ├── ChatArea.tsx
 │   │   ├── InputArea.tsx
 │   │   ├── RightPanel.tsx
 │   │   ├── Sidebar.tsx
-│   │   └── TopBar.tsx
+│   │   ├── TopBar.tsx
+│   │   ├── SettingsModal.tsx
+│   │   ├── CertErrorModal.tsx
+│   │   ├── SkillDetailView.tsx
+│   │   └── CronJobDetailView.tsx
 │   ├── lib/
 │   │   └── openclaw-client.ts  # WebSocket client
 │   ├── store/
-│   │   └── index.ts   # Zustand state management
+│   │   └── index.ts       # Zustand state management
 │   ├── styles/
-│   │   └── index.css  # Main stylesheet
+│   │   └── index.css      # Main stylesheet
 │   ├── App.tsx
 │   └── main.tsx
-├── ui-prototype/      # Static HTML prototype
-└── DESIGN_SPEC.md     # UI design specification
+├── build/                 # App icons and build assets
+└── scripts/               # Utility scripts
 ```
 
 ## OpenClaw API

@@ -176,8 +176,8 @@ a {
 }
 
 .logo-icon {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   display: block;
   object-fit: contain;
   transition: transform var(--transition-fast);
@@ -191,10 +191,7 @@ a {
   font-family: var(--font-display);
   font-size: 1.25rem;
   font-weight: 600;
-  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--accent-cyan);
 }
 
 .sidebar.collapsed .logo-text {
