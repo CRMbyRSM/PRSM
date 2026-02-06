@@ -18,7 +18,8 @@ export function Sidebar() {
     updateSessionLabel,
     agents,
     currentAgentId,
-    setCurrentAgent
+    setCurrentAgent,
+    selectAgentForDetail
   } = useStore()
 
   const currentAgent = agents.find((a) => a.id === currentAgentId)
@@ -126,6 +127,7 @@ export function Sidebar() {
             agents={agents}
             currentAgent={currentAgent}
             onSelect={setCurrentAgent}
+            onOpenDetail={(agent) => selectAgentForDetail(agent)}
           />
         </div>
 
@@ -239,21 +241,36 @@ function RenameModal({ currentTitle, onSave, onClose }: {
 function AgentSelector({
   agents,
   currentAgent,
-  onSelect
+  onSelect,
+  onOpenDetail
 }: {
   agents: Agent[]
   currentAgent?: Agent
   onSelect: (id: string) => void
+  onOpenDetail: (agent: Agent) => void
 }) {
   const [open, setOpen] = useState(false)
+
+  const handleSettingsClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (currentAgent) {
+      onOpenDetail(currentAgent)
+    }
+  }
 
   return (
     <div className={`agent-selector ${open ? 'open' : ''}`}>
       <div className="agent-selected" onClick={() => setOpen(!open)}>
         <div className="agent-avatar">
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2zm-4 12a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z" />
-          </svg>
+          {currentAgent?.emoji ? (
+            <span className="agent-emoji-small">{currentAgent.emoji}</span>
+          ) : currentAgent?.avatar ? (
+            <img src={currentAgent.avatar} alt={currentAgent.name} className="agent-avatar-img-small" />
+          ) : (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2zm-4 12a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z" />
+            </svg>
+          )}
         </div>
         <div className="agent-info">
           <div className="agent-name">{currentAgent?.name || 'Select Agent'}</div>
@@ -261,6 +278,16 @@ function AgentSelector({
             {currentAgent?.status || 'Unknown'}
           </div>
         </div>
+        <button
+          className="agent-settings-btn"
+          onClick={handleSettingsClick}
+          title="Agent Settings"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" />
+          </svg>
+        </button>
         <svg className="dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M6 9l6 6 6-6" />
         </svg>
@@ -277,9 +304,15 @@ function AgentSelector({
             }}
           >
             <div className="agent-avatar small">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2zm-4 12a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z" />
-              </svg>
+              {agent.emoji ? (
+                <span className="agent-emoji-small">{agent.emoji}</span>
+              ) : agent.avatar ? (
+                <img src={agent.avatar} alt={agent.name} className="agent-avatar-img-small" />
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2zm-4 12a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z" />
+                </svg>
+              )}
             </div>
             <span>{agent.name}</span>
             {agent.id === currentAgent?.id && (

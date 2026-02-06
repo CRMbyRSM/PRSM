@@ -1,6 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { OpenClawClient, Message, Session, Agent, Skill, CronJob } from '../lib/openclaw-client'
+import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile } from '../lib/openclaw-client'
+
+interface AgentDetail {
+  agent: Agent
+  workspace: string
+  files: AgentFile[]
+}
 
 interface AppState {
   // Theme
@@ -40,14 +46,18 @@ interface AppState {
   setRightPanelTab: (tab: 'skills' | 'crons') => void
 
   // Main View State
-  mainView: 'chat' | 'skill-detail' | 'cron-detail'
-  setMainView: (view: 'chat' | 'skill-detail' | 'cron-detail') => void
+  mainView: 'chat' | 'skill-detail' | 'cron-detail' | 'agent-detail'
+  setMainView: (view: 'chat' | 'skill-detail' | 'cron-detail' | 'agent-detail') => void
   selectedSkill: Skill | null
   selectedCronJob: CronJob | null
+  selectedAgentDetail: AgentDetail | null
   selectSkill: (skill: Skill) => Promise<void>
   selectCronJob: (cronJob: CronJob) => Promise<void>
+  selectAgentForDetail: (agent: Agent) => Promise<void>
   closeDetailView: () => void
   toggleSkillEnabled: (skillId: string, enabled: boolean) => Promise<void>
+  saveAgentFile: (agentId: string, fileName: string, content: string) => Promise<boolean>
+  refreshAgentFiles: (agentId: string) => Promise<void>
 
   // Chat
   messages: Message[]
@@ -130,13 +140,14 @@ export const useStore = create<AppState>()(
       setMainView: (view) => set({ mainView: view }),
       selectedSkill: null,
       selectedCronJob: null,
+      selectedAgentDetail: null,
       selectSkill: async (skill) => {
         // All skill data comes from skills.status, no need for separate fetch
-        set({ mainView: 'skill-detail', selectedSkill: skill, selectedCronJob: null })
+        set({ mainView: 'skill-detail', selectedSkill: skill, selectedCronJob: null, selectedAgentDetail: null })
       },
       selectCronJob: async (cronJob) => {
         const { client } = get()
-        set({ mainView: 'cron-detail', selectedCronJob: cronJob, selectedSkill: null })
+        set({ mainView: 'cron-detail', selectedCronJob: cronJob, selectedSkill: null, selectedAgentDetail: null })
 
         // Fetch full cron job details including content
         if (client) {
@@ -146,7 +157,38 @@ export const useStore = create<AppState>()(
           }
         }
       },
-      closeDetailView: () => set({ mainView: 'chat', selectedSkill: null, selectedCronJob: null }),
+      selectAgentForDetail: async (agent) => {
+        const { client } = get()
+        set({ mainView: 'agent-detail', selectedAgentDetail: { agent, workspace: '', files: [] }, selectedSkill: null, selectedCronJob: null })
+
+        if (client) {
+          // Fetch workspace files
+          const filesResult = await client.getAgentFiles(agent.id)
+          if (filesResult) {
+            // Fetch content for each file
+            const filesWithContent: AgentFile[] = []
+            for (const file of filesResult.files) {
+              if (!file.missing) {
+                const fileContent = await client.getAgentFile(agent.id, file.name)
+                filesWithContent.push({
+                  ...file,
+                  content: fileContent?.content
+                })
+              } else {
+                filesWithContent.push(file)
+              }
+            }
+            set({
+              selectedAgentDetail: {
+                agent,
+                workspace: filesResult.workspace,
+                files: filesWithContent
+              }
+            })
+          }
+        }
+      },
+      closeDetailView: () => set({ mainView: 'chat', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null }),
       toggleSkillEnabled: async (skillId, enabled) => {
         const { client } = get()
         if (!client) return
@@ -162,6 +204,57 @@ export const useStore = create<AppState>()(
             ? { ...state.selectedSkill, enabled }
             : state.selectedSkill
         }))
+      },
+      saveAgentFile: async (agentId, fileName, content) => {
+        const { client } = get()
+        if (!client) return false
+
+        const success = await client.setAgentFile(agentId, fileName, content)
+        if (success) {
+          // Update local state
+          set((state) => {
+            if (!state.selectedAgentDetail) return state
+            return {
+              selectedAgentDetail: {
+                ...state.selectedAgentDetail,
+                files: state.selectedAgentDetail.files.map((f) =>
+                  f.name === fileName ? { ...f, content, missing: false } : f
+                )
+              }
+            }
+          })
+
+          // Refresh agents list to update identity
+          await get().fetchAgents()
+        }
+        return success
+      },
+      refreshAgentFiles: async (agentId) => {
+        const { client, selectedAgentDetail } = get()
+        if (!client || !selectedAgentDetail) return
+
+        const filesResult = await client.getAgentFiles(agentId)
+        if (filesResult) {
+          const filesWithContent: AgentFile[] = []
+          for (const file of filesResult.files) {
+            if (!file.missing) {
+              const fileContent = await client.getAgentFile(agentId, file.name)
+              filesWithContent.push({
+                ...file,
+                content: fileContent?.content
+              })
+            } else {
+              filesWithContent.push(file)
+            }
+          }
+          set({
+            selectedAgentDetail: {
+              ...selectedAgentDetail,
+              workspace: filesResult.workspace,
+              files: filesWithContent
+            }
+          })
+        }
       },
 
       // Chat
@@ -305,11 +398,30 @@ export const useStore = create<AppState>()(
 
           client.on('streamChunk', (chunkArg: unknown) => {
             const chunk = String(chunkArg)
+            // Skip empty chunks
+            if (!chunk) return
+
             set((state) => {
               const messages = [...state.messages]
               const lastMessage = messages[messages.length - 1]
 
               if (lastMessage && lastMessage.role === 'assistant') {
+                // Check if this chunk would create duplicate content
+                // (handles case where full content is sent instead of delta)
+                if (lastMessage.content.endsWith(chunk) || chunk.startsWith(lastMessage.content)) {
+                  // This looks like full content, not a delta - replace instead of append
+                  if (chunk.length > lastMessage.content.length) {
+                    const updatedMessage = {
+                      ...lastMessage,
+                      content: chunk
+                    }
+                    messages[messages.length - 1] = updatedMessage
+                    return { messages, isStreaming: true }
+                  }
+                  // Chunk is same or subset of existing content, skip
+                  return state
+                }
+
                 // Append to existing assistant message
                 const updatedMessage = {
                   ...lastMessage,
