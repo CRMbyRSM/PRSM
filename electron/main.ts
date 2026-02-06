@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, shell, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, Menu, safeStorage } from 'electron'
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 
 let mainWindow: BrowserWindow | null = null
 const trustedHosts = new Set<string>()
@@ -54,19 +54,21 @@ function createWindow() {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      devTools: true
+      devTools: !app.isPackaged
     },
     titleBarStyle: 'hiddenInset',
     frame: process.platform === 'darwin' ? true : true,
     backgroundColor: '#0d1117'
   })
 
-  // Always allow DevTools with F12 or Ctrl+Shift+I
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
-      mainWindow?.webContents.toggleDevTools()
-    }
-  })
+  // Allow DevTools shortcuts only in development
+  if (!app.isPackaged) {
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
+        mainWindow?.webContents.toggleDevTools()
+      }
+    })
+  }
 
   // Enable context menu for copy/paste
   mainWindow.webContents.on('context-menu', (_event, params) => {
@@ -149,6 +151,57 @@ ipcMain.handle('shell:openExternal', async (_event, url: string) => {
   } catch {
     throw new Error('Invalid URL')
   }
+})
+
+// --- Secure token storage ---
+
+function getTokenPath(): string {
+  return join(app.getPath('userData'), 'auth-token.enc')
+}
+
+function saveToken(token: string): void {
+  const filePath = getTokenPath()
+  if (!token) {
+    // Delete the file when token is cleared
+    try { unlinkSync(filePath) } catch { /* file may not exist */ }
+    return
+  }
+  if (safeStorage.isEncryptionAvailable()) {
+    const encrypted = safeStorage.encryptString(token)
+    writeFileSync(filePath, encrypted)
+  } else {
+    // Fallback: base64 (better than plaintext in localStorage)
+    writeFileSync(filePath, Buffer.from(token, 'utf-8').toString('base64'), 'utf-8')
+  }
+}
+
+function loadToken(): string {
+  const filePath = getTokenPath()
+  if (!existsSync(filePath)) return ''
+  try {
+    const raw = readFileSync(filePath)
+    if (safeStorage.isEncryptionAvailable()) {
+      return safeStorage.decryptString(raw)
+    }
+    // Fallback: base64
+    return Buffer.from(raw.toString('utf-8'), 'base64').toString('utf-8')
+  } catch {
+    return ''
+  }
+}
+
+ipcMain.handle('auth:saveToken', async (_event, token: string) => {
+  if (typeof token !== 'string') throw new Error('Invalid token')
+  saveToken(token)
+  return { saved: true }
+})
+
+ipcMain.handle('auth:getToken', async () => {
+  return loadToken()
+})
+
+ipcMain.handle('auth:isEncryptionAvailable', async () => {
+  return safeStorage.isEncryptionAvailable()
 })
 
 // Trust a hostname for certificate errors (persisted across app restarts)

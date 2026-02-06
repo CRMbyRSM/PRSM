@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConfig: () => ipcRenderer.invoke('openclaw:getConfig'),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   trustHost: (hostname: string) => ipcRenderer.invoke('cert:trustHost', hostname),
+  saveToken: (token: string) => ipcRenderer.invoke('auth:saveToken', token),
+  getToken: () => ipcRenderer.invoke('auth:getToken'),
+  isEncryptionAvailable: () => ipcRenderer.invoke('auth:isEncryptionAvailable'),
   platform: process.platform
 })
 
@@ -18,6 +21,9 @@ declare global {
       getConfig: () => Promise<{ defaultUrl: string; theme: string }>
       openExternal: (url: string) => Promise<void>
       trustHost: (hostname: string) => Promise<{ trusted: boolean; hostname: string }>
+      saveToken: (token: string) => Promise<{ saved: boolean }>
+      getToken: () => Promise<string>
+      isEncryptionAvailable: () => Promise<boolean>
       platform: NodeJS.Platform
     }
   }

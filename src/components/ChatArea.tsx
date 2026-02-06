@@ -4,6 +4,7 @@ import { Message } from '../lib/openclaw-client'
 import { format, isSameDay } from 'date-fns'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeSanitize from 'rehype-sanitize'
 import logoUrl from '../../build/icon.png'
 
 export function ChatArea() {
@@ -159,9 +160,10 @@ function MessageContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeSanitize]}
       components={{
         code(props) {
-          const { children, className, node, ...rest } = props
+          const { children, className, node: _node, ...rest } = props
           const match = /language-(\w+)/.exec(className || '')
           return match ? (
             <pre>

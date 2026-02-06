@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { OpenClawClient } from './openclaw-client'
 
 describe('OpenClawClient', () => {
@@ -6,6 +6,10 @@ describe('OpenClawClient', () => {
 
   beforeEach(() => {
     client = new OpenClawClient('ws://localhost:18789')
+  })
+
+  afterEach(() => {
+    client.disconnect()
   })
 
   describe('constructor', () => {
@@ -49,7 +53,8 @@ describe('OpenClawClient', () => {
   })
 
   describe('listSessions', () => {
-    it('should return mock sessions when not connected', async () => {
+    it('should return sessions after connecting', async () => {
+      await client.connect()
       const sessions = await client.listSessions()
 
       expect(Array.isArray(sessions)).toBe(true)
@@ -60,7 +65,8 @@ describe('OpenClawClient', () => {
   })
 
   describe('listAgents', () => {
-    it('should return mock agents when not connected', async () => {
+    it('should return agents after connecting', async () => {
+      await client.connect()
       const agents = await client.listAgents()
 
       expect(Array.isArray(agents)).toBe(true)
@@ -72,7 +78,8 @@ describe('OpenClawClient', () => {
   })
 
   describe('listSkills', () => {
-    it('should return mock skills when not connected', async () => {
+    it('should return skills after connecting', async () => {
+      await client.connect()
       const skills = await client.listSkills()
 
       expect(Array.isArray(skills)).toBe(true)
@@ -84,7 +91,8 @@ describe('OpenClawClient', () => {
   })
 
   describe('listCronJobs', () => {
-    it('should return mock cron jobs when not connected', async () => {
+    it('should return cron jobs after connecting', async () => {
+      await client.connect()
       const cronJobs = await client.listCronJobs()
 
       expect(Array.isArray(cronJobs)).toBe(true)

@@ -110,7 +110,10 @@ export const useStore = create<AppState>()(
       authMode: 'token',
       setAuthMode: (mode) => set({ authMode: mode }),
       gatewayToken: '',
-      setGatewayToken: (token) => set({ gatewayToken: token }),
+      setGatewayToken: (token) => {
+        set({ gatewayToken: token })
+        window.electronAPI?.saveToken(token).catch(() => {})
+      },
       connected: false,
       connecting: false,
       client: null,
@@ -328,6 +331,31 @@ export const useStore = create<AppState>()(
           if (config.theme) {
             set({ theme: config.theme as 'dark' | 'light' })
           }
+
+          // Load token from secure storage
+          const secureToken = await window.electronAPI.getToken()
+          if (secureToken) {
+            set({ gatewayToken: secureToken })
+          } else {
+            // Migration: if Zustand has a token from old localStorage but secure storage is empty,
+            // migrate it to secure storage and clear from localStorage
+            const { gatewayToken: legacyToken } = get()
+            if (legacyToken) {
+              await window.electronAPI.saveToken(legacyToken).catch(() => {})
+            }
+          }
+
+          // Clean up legacy gatewayToken from localStorage
+          try {
+            const raw = localStorage.getItem('clawcontrol-storage')
+            if (raw) {
+              const parsed = JSON.parse(raw)
+              if (parsed.state?.gatewayToken) {
+                delete parsed.state.gatewayToken
+                localStorage.setItem('clawcontrol-storage', JSON.stringify(parsed))
+              }
+            }
+          } catch { /* ignore */ }
         }
 
         // Show settings if no URL or token configured
@@ -526,7 +554,6 @@ export const useStore = create<AppState>()(
         theme: state.theme,
         serverUrl: state.serverUrl,
         authMode: state.authMode,
-        gatewayToken: state.gatewayToken,
         sidebarCollapsed: state.sidebarCollapsed,
         thinkingEnabled: state.thinkingEnabled
       })
