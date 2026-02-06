@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Tailscale WebSocket Test</title>
+  <style>
+    body { font-family: system-ui; padding: 20px; background: #1a1a2e; color: #eee; }
+    .log { background: #16213e; padding: 15px; border-radius: 8px; margin: 10px 0; font-family: monospace; white-space: pre-wrap; max-height: 400px; overflow: auto; }
+    button { padding: 10px 20px; margin: 5px; cursor: pointer; background: #0f3460; color: white; border: none; border-radius: 6px; }
+    button:hover { background: #1a508b; }
+    button.danger { background: #dc2626; }
+    button.danger:hover { background: #b91c1c; }
+    .success { color: #4ade80; }
+    .error { color: #f87171; }
+    .info { color: #60a5fa; }
+    input { padding: 8px; margin: 5px 0; background: #16213e; border: 1px solid #334155; color: #eee; border-radius: 4px; }
+    label { display: block; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Tailscale WebSocket Connection Test</h1>
+
+  <p>Before testing WSS, you must accept the self-signed certificate:</p>
+  <button onclick="window.open('https://openclaw.theedwards.cloud', '_blank')">
+    Step 1: Open HTTPS URL (Accept Certificate)
+  </button>
+
+  <hr>
+
+  <div>
+    <label>Auth Mode:</label>
+    <select id="authMode" style="padding: 8px; background: #16213e; border: 1px solid #334155; color: #eee; border-radius: 4px;">
+      <option value="token">Token</option>
+      <option value="password">Password</option>
+    </select>
+  </div>
+
+  <div>
+    <label>Gateway Token/Password (if required):</label>
+    <input type="password" id="token" style="width: 300px;" placeholder="Enter token or password">
+  </div>
+
+  <div style="margin-top: 15px;">
+    <button onclick="testConnection()">Step 2: Test WebSocket Connection</button>
+    <button class="danger" onclick="disconnectWs()">Disconnect</button>
+    <button onclick="clearLog()">Clear Log</button>
+  </div>
+
+  <div id="log" class="log"></div>
+
+  <script>
+    let ws = null;
+
+    function log(msg, type = '') {
+      const el = document.getElementById('log');
+      const span = document.createElement('span');
+      span.className = type;
+      span.textContent = new Date().toLocaleTimeString() + ' - ' + msg + '\n';
+      el.appendChild(span);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function clearLog() {
+      document.getElementById('log').innerHTML = '';
+    }
+
+    function disconnectWs() {
+      if (ws) {
+        log('Disconnecting...', 'info');
+        ws.close();
+        ws = null;
+      } else {
+        log('Not connected', 'error');
+      }
+    }
+
+    function testConnection() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        log('Already connected. Disconnect first.', 'error');
+        return;
+      }
+
+      const url = 'wss://openclaw.theedwards.cloud';
+      log('Connecting to: ' + url, 'info');
+
+      try {
+        ws = new WebSocket(url);
+
+        ws.onopen = () => {
+          log('WebSocket CONNECTED!', 'success');
+        };
+
+        ws.onmessage = (event) => {
+          log('Received: ' + event.data, 'info');
+
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'event' && msg.event === 'connect.challenge') {
+              log('Received challenge, sending connect frame...', 'info');
+              const token = document.getElementById('token').value.trim();
+              const connectMsg = {
+                type: 'req',
+                id: '1',
+                method: 'connect',
+                params: {
+                  minProtocol: 3,
+                  maxProtocol: 3,
+                  role: 'operator',
+                  client: {
+                    id: 'gateway-client',
+                    displayName: 'ClawControl',
+                    version: '1.0.0',
+                    platform: 'web',
+                    mode: 'backend'
+                  },
+                  auth: token
+                    ? (document.getElementById('authMode').value === 'password'
+                        ? { password: token }
+                        : { token: token })
+                    : undefined
+                }
+              };
+              ws.send(JSON.stringify(connectMsg));
+              log('Sent: ' + JSON.stringify(connectMsg), 'info');
+            }
+
+            if (msg.type === 'res' && msg.ok && msg.payload?.type === 'hello-ok') {
+              log('AUTHENTICATED! Full handshake successful!', 'success');
+            }
+
+            if (msg.type === 'res' && !msg.ok) {
+              log('ERROR: ' + (msg.error?.message || 'Unknown error'), 'error');
+            }
+          } catch (e) {
+            // Not JSON
+          }
+        };
+
+        ws.onerror = (error) => {
+          log('WebSocket ERROR - Certificate may not be accepted', 'error');
+          log('Make sure you clicked Step 1 and accepted the certificate', 'error');
+        };
+
+        ws.onclose = (event) => {
+          log('Connection closed. Code: ' + event.code + (event.reason ? ', Reason: ' + event.reason : ''), 'info');
+          ws = null;
+        };
+
+      } catch (err) {
+        log('Failed to create WebSocket: ' + err.message, 'error');
+      }
+    }
+  </script>
+</body>
+</html>

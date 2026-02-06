@@ -1,0 +1,82 @@
+{
+  "name": "clawcontrol",
+  "version": "1.0.0",
+  "description": "Desktop client for OpenClaw AI assistant",
+  "main": "dist-electron/main.js",
+  "author": "ClawControl Team",
+  "license": "MIT",
+  "scripts": {
+    "dev": "npx vite",
+    "build": "npx vite build && npx electron-builder",
+    "build:win": "npx vite build && npx electron-builder --win",
+    "build:mac": "npx vite build && npx electron-builder --mac",
+    "preview": "npx vite preview",
+    "electron:dev": "npx vite",
+    "test": "npx vitest",
+    "test:run": "npx vitest run",
+    "test:coverage": "npx vitest run --coverage",
+    "test:connection": "node scripts/test-connection.js",
+    "lint": "npx eslint src --ext .ts,.tsx",
+    "typecheck": "npx -p typescript tsc --noEmit"
+  },
+  "dependencies": {
+    "date-fns": "^3.3.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.4.0",
+    "@testing-library/react": "^14.2.0",
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1",
+    "eslint": "^8.56.0",
+    "jsdom": "^24.0.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12",
+    "vite-plugin-electron": "^0.28.0",
+    "vite-plugin-electron-renderer": "^0.14.5",
+    "vitest": "^1.2.2",
+    "wait-on": "^7.2.0",
+    "ws": "^8.19.0"
+  },
+  "build": {
+    "appId": "com.clawcontrol.app",
+    "productName": "ClawControl",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
