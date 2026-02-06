@@ -20,8 +20,8 @@ export function CertErrorModal() {
         // Fallback for browser - open in new tab
         window.open(certErrorUrl, '_blank')
       }
-    } catch (err) {
-      console.error('Failed to trust certificate:', err)
+    } catch {
+      // Trust failed - modal stays open, user can retry or cancel
     }
   }
 

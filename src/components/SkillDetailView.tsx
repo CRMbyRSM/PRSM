@@ -14,8 +14,8 @@ export function SkillDetailView() {
     try {
       await client.installSkill(selectedSkill.name, installId)
       await fetchSkills()
-    } catch (err) {
-      console.error('Install failed:', err)
+    } catch {
+      // Install failed - UI will show current state
     }
   }
 

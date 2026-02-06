@@ -321,7 +321,7 @@ export const useStore = create<AppState>()(
         // Try to get config from electron (only use defaults if not already configured)
         if (window.electronAPI) {
           const config = await window.electronAPI.getConfig()
-          const { serverUrl, theme } = get()
+          const { serverUrl } = get()
           if (!serverUrl && config.defaultUrl) {
             set({ serverUrl: config.defaultUrl })
           }
@@ -456,8 +456,7 @@ export const useStore = create<AppState>()(
             get().fetchSkills(),
             get().fetchCronJobs()
           ])
-        } catch (error) {
-          console.error('Failed to connect:', error)
+        } catch {
           set({ connecting: false, connected: false })
         }
       },

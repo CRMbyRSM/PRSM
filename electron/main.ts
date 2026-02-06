@@ -1,15 +1,55 @@
 import { app, BrowserWindow, ipcMain, shell, Menu } from 'electron'
 import { join } from 'path'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 
 let mainWindow: BrowserWindow | null = null
 const trustedHosts = new Set<string>()
 
+// Path to persist trusted hosts
+function getTrustedHostsPath(): string {
+  const userDataPath = app.getPath('userData')
+  return join(userDataPath, 'trusted-hosts.json')
+}
+
+// Load trusted hosts from disk
+function loadTrustedHosts(): void {
+  try {
+    const filePath = getTrustedHostsPath()
+    if (existsSync(filePath)) {
+      const data = readFileSync(filePath, 'utf-8')
+      const hosts: string[] = JSON.parse(data)
+      hosts.forEach(host => trustedHosts.add(host))
+    }
+  } catch {
+    // Ignore errors loading trusted hosts
+  }
+}
+
+// Save trusted hosts to disk
+function saveTrustedHosts(): void {
+  try {
+    const filePath = getTrustedHostsPath()
+    const dir = join(filePath, '..')
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true })
+    }
+    const hosts = Array.from(trustedHosts)
+    writeFileSync(filePath, JSON.stringify(hosts, null, 2))
+  } catch {
+    // Ignore errors saving trusted hosts
+  }
+}
+
 function createWindow() {
+  // Remove the default menu bar (File, Edit, View, Window, Help)
+  Menu.setApplicationMenu(null)
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
     minHeight: 600,
+    icon: join(__dirname, '../build/icon.png'),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -68,7 +108,10 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
   callback(false)
 })
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  loadTrustedHosts()
+  createWindow()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -96,11 +139,30 @@ ipcMain.handle('openclaw:getConfig', async () => {
 })
 
 ipcMain.handle('shell:openExternal', async (_event, url: string) => {
-  await shell.openExternal(url)
+  // Validate URL to only allow http/https protocols
+  try {
+    const parsedUrl = new URL(url)
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new Error('Invalid protocol')
+    }
+    await shell.openExternal(url)
+  } catch {
+    throw new Error('Invalid URL')
+  }
 })
 
-// Trust a hostname for certificate errors
+// Trust a hostname for certificate errors (persisted across app restarts)
 ipcMain.handle('cert:trustHost', async (_event, hostname: string) => {
+  // Validate hostname format
+  if (!hostname || typeof hostname !== 'string' || hostname.length > 253) {
+    throw new Error('Invalid hostname')
+  }
+  // Basic hostname validation (alphanumeric, dots, hyphens)
+  const hostnameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$/
+  if (!hostnameRegex.test(hostname)) {
+    throw new Error('Invalid hostname format')
+  }
   trustedHosts.add(hostname)
+  saveTrustedHosts()
   return { trusted: true, hostname }
 })

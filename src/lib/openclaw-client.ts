@@ -148,8 +148,8 @@ export class OpenClawClient {
     this.eventHandlers.get(event)?.forEach((handler) => {
       try {
         handler(...args)
-      } catch (e) {
-        console.error(`Error in event handler for ${event}:`, e)
+      } catch {
+        // Event handler error - silently ignore
       }
     })
   }
