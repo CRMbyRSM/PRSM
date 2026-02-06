@@ -15,7 +15,30 @@ A desktop client for OpenClaw AI assistant. Built with Electron, React, and Type
 
 ## Screenshots
 
-*Coming soon*
+<p align="center">
+  <img src="screenshots/home.png" width="600" alt="Main Chat Interface">
+  <br><em>Main chat interface with sidebar and skills panel</em>
+</p>
+
+<p align="center">
+  <img src="screenshots/agent.png" width="600" alt="Agent Profile">
+  <br><em>Agent profile view</em>
+</p>
+
+<p align="center">
+  <img src="screenshots/skills.png" width="600" alt="Skills Panel">
+  <br><em>Skills browser</em>
+</p>
+
+<p align="center">
+  <img src="screenshots/cronjob.png" width="600" alt="Cron Jobs">
+  <br><em>Cron job management</em>
+</p>
+
+<p align="center">
+  <img src="screenshots/connect.png" width="600" alt="Connection Settings">
+  <br><em>Connection settings</em>
+</p>
 
 ## Installation
 
