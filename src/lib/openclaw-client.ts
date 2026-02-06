@@ -24,6 +24,17 @@ export interface Agent {
   description?: string
   status: 'online' | 'offline' | 'busy'
   avatar?: string
+  emoji?: string
+  theme?: string
+}
+
+export interface AgentFile {
+  name: string
+  path: string
+  missing: boolean
+  size?: number
+  updatedAtMs?: number
+  content?: string
 }
 
 export interface SkillRequirements {
@@ -113,6 +124,7 @@ export class OpenClawClient {
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
   private authenticated = false
+  private activeStreamSource: 'chat' | 'agent' | null = null
 
   constructor(url: string, token: string = '', authMode: 'token' | 'password' = 'token') {
     this.url = url
@@ -320,7 +332,12 @@ export class OpenClawClient {
     switch (event) {
       case 'chat':
         if (payload.state === 'delta') {
-          const chunk = payload.message?.content || payload.errorMessage
+          // If agent stream is already active, ignore chat events to prevent duplicates
+          if (this.activeStreamSource === 'agent') return
+          this.activeStreamSource = 'chat'
+
+          // Use delta field for incremental content, NOT message.content which is accumulated
+          const chunk = payload.delta || payload.message?.delta || payload.errorMessage
           if (chunk) {
             const chunkUpper = chunk.toUpperCase()
             const isHeartbeat = chunkUpper.includes('HEARTBEAT_OK') || chunkUpper.includes('HEARTBEAT.MD')
@@ -344,6 +361,7 @@ export class OpenClawClient {
               }
             }
           }
+          this.activeStreamSource = null
           this.emit('streamEnd')
         }
         break
@@ -352,9 +370,13 @@ export class OpenClawClient {
         break
       case 'agent':
         if (payload.stream === 'assistant') {
+          // If chat stream is already active, ignore agent events to prevent duplicates
+          if (this.activeStreamSource === 'chat') return
+          this.activeStreamSource = 'agent'
+
           // payload.data is { text: string, delta: string }
           const content = payload.data?.delta
-          
+
           if (typeof content === 'string') {
             const contentUpper = content.toUpperCase()
             const isHeartbeat = contentUpper.includes('HEARTBEAT_OK') || contentUpper.includes('HEARTBEAT.MD')
@@ -364,6 +386,7 @@ export class OpenClawClient {
           }
         } else if (payload.stream === 'lifecycle') {
            if (payload.data?.state === 'complete') {
+             this.activeStreamSource = null
              this.emit('streamEnd')
            }
         }
@@ -489,19 +512,131 @@ export class OpenClawClient {
     await this.call('chat.send', payload)
   }
 
+  // Resolve avatar URL - handles relative paths like /avatar/main
+  private resolveAvatarUrl(avatar: string | undefined, agentId: string): string | undefined {
+    if (!avatar) return undefined
+
+    // Already a full URL or data URI
+    if (avatar.startsWith('http://') || avatar.startsWith('https://') || avatar.startsWith('data:')) {
+      return avatar
+    }
+
+    // Server-relative path like /avatar/main - convert to full URL
+    if (avatar.startsWith('/avatar/')) {
+      try {
+        const wsUrl = new URL(this.url)
+        const protocol = wsUrl.protocol === 'wss:' ? 'https:' : 'http:'
+        return `${protocol}//${wsUrl.host}${avatar}`
+      } catch {
+        return undefined
+      }
+    }
+
+    // Looks like a valid relative file path - construct avatar URL
+    if (avatar.includes('/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(avatar)) {
+      try {
+        const wsUrl = new URL(this.url)
+        const protocol = wsUrl.protocol === 'wss:' ? 'https:' : 'http:'
+        return `${protocol}//${wsUrl.host}/avatar/${agentId}`
+      } catch {
+        return undefined
+      }
+    }
+
+    // Invalid avatar (like single character from parsing error)
+    return undefined
+  }
+
   // Agents
   async listAgents(): Promise<Agent[]> {
     try {
       const result = await this.call<any>('agents.list')
       const agents = Array.isArray(result) ? result : (result?.agents || result?.items || result?.list || [])
-      return agents.map((a: any) => ({
-        id: String(a.agentId || a.id || `agent-${Math.random()}`),
-        name: String(a.name || a.agentId || a.id || 'Unnamed Agent'),
-        description: a.description ? String(a.description) : undefined,
-        status: a.status || 'online'
-      }))
+
+      // Enrich each agent with identity from agent.identity.get
+      const enrichedAgents: Agent[] = []
+      for (const a of agents) {
+        const agentId = String(a.agentId || a.id || 'main')
+        let identity = a.identity || {}
+
+        // Fetch identity if not already included
+        if (!identity.name && !identity.avatar) {
+          try {
+            const fetchedIdentity = await this.call<any>('agent.identity.get', { agentId })
+            if (fetchedIdentity) {
+              identity = {
+                name: fetchedIdentity.name,
+                emoji: fetchedIdentity.emoji,
+                avatar: fetchedIdentity.avatar,
+                avatarUrl: fetchedIdentity.avatarUrl
+              }
+            }
+          } catch {
+            // Identity fetch failed, continue with defaults
+          }
+        }
+
+        // Resolve avatar URL
+        const avatarUrl = this.resolveAvatarUrl(identity.avatarUrl || identity.avatar, agentId)
+
+        // Clean up emoji - filter out placeholder text
+        let emoji = identity.emoji
+        if (emoji && (emoji.includes('none') || emoji.includes('*') || emoji.length > 4)) {
+          emoji = undefined
+        }
+
+        enrichedAgents.push({
+          id: agentId,
+          name: String(identity.name || a.name || agentId || 'Unnamed Agent'),
+          description: a.description || identity.theme ? String(a.description || identity.theme) : undefined,
+          status: a.status || 'online',
+          avatar: avatarUrl,
+          emoji,
+          theme: identity.theme
+        })
+      }
+
+      return enrichedAgents
     } catch {
       return []
+    }
+  }
+
+  // Get agent identity
+  async getAgentIdentity(agentId: string): Promise<{ name?: string; emoji?: string; avatar?: string; avatarUrl?: string } | null> {
+    try {
+      return await this.call<any>('agent.identity.get', { agentId })
+    } catch {
+      return null
+    }
+  }
+
+  // Get agent workspace files
+  async getAgentFiles(agentId: string): Promise<{ workspace: string; files: Array<{ name: string; path: string; missing: boolean; size?: number }> } | null> {
+    try {
+      return await this.call<any>('agents.files.list', { agentId })
+    } catch {
+      return null
+    }
+  }
+
+  // Get agent file content
+  async getAgentFile(agentId: string, fileName: string): Promise<{ content?: string; missing: boolean } | null> {
+    try {
+      const result = await this.call<any>('agents.files.get', { agentId, name: fileName })
+      return result?.file || null
+    } catch {
+      return null
+    }
+  }
+
+  // Set agent file content
+  async setAgentFile(agentId: string, fileName: string, content: string): Promise<boolean> {
+    try {
+      await this.call<any>('agents.files.set', { agentId, name: fileName, content })
+      return true
+    } catch {
+      return false
     }
   }
 

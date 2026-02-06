@@ -9,6 +9,7 @@ import { SettingsModal } from './components/SettingsModal'
 import { CertErrorModal } from './components/CertErrorModal'
 import { SkillDetailView } from './components/SkillDetailView'
 import { CronJobDetailView } from './components/CronJobDetailView'
+import { AgentDetailView } from './components/AgentDetailView'
 
 function App() {
   const { theme, initializeApp, sidebarOpen, rightPanelOpen, mainView } = useStore()
@@ -35,6 +36,7 @@ function App() {
         )}
         {mainView === 'skill-detail' && <SkillDetailView />}
         {mainView === 'cron-detail' && <CronJobDetailView />}
+        {mainView === 'agent-detail' && <AgentDetailView />}
       </main>
 
       <RightPanel />
