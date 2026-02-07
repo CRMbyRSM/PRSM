@@ -19,7 +19,8 @@ export function Sidebar() {
     agents,
     currentAgentId,
     setCurrentAgent,
-    selectAgentForDetail
+    selectAgentForDetail,
+    unreadCounts
   } = useStore()
 
   const currentAgent = agents.find((a) => a.id === currentAgentId)
@@ -88,6 +89,16 @@ export function Sidebar() {
                 onContextMenu={(e) => handleContextMenu(e, session.id, session.title)}
               >
                 <div className="session-indicator" />
+                {session.spawned && (
+                  <span className="session-spawned-badge" title="Spawned subagent session">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M6 3v12" />
+                      <path d="M18 9a3 3 0 100-6 3 3 0 000 6z" />
+                      <path d="M6 21a3 3 0 100-6 3 3 0 000 6z" />
+                      <path d="M15 6h-4a2 2 0 00-2 2v7" />
+                    </svg>
+                  </span>
+                )}
                 <div className="session-content">
                   <div className="session-title">{session.title}</div>
                   {session.lastMessage && (
@@ -97,6 +108,9 @@ export function Sidebar() {
                     {formatDistanceToNow(new Date(session.updatedAt), { addSuffix: true })}
                   </div>
                 </div>
+                {unreadCounts[session.id] > 0 && (
+                  <span className="session-badge">{unreadCounts[session.id]}</span>
+                )}
                 <button
                   className="session-delete"
                   onClick={(e) => {

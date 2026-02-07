@@ -125,6 +125,43 @@ export function AgentDetailView() {
           </div>
         </section>
 
+        {/* Configuration Section */}
+        {(agent.model || agent.thinkingLevel || agent.timeout !== undefined || agent.configured !== undefined) && (
+          <section className="detail-section">
+            <h2>Configuration</h2>
+            <div className="agent-config-grid">
+              {agent.model && (
+                <div className="agent-config-item">
+                  <span className="agent-config-label">Model</span>
+                  <span className="agent-config-value"><code>{agent.model}</code></span>
+                </div>
+              )}
+              {agent.thinkingLevel && (
+                <div className="agent-config-item">
+                  <span className="agent-config-label">Thinking</span>
+                  <span className="agent-config-value">{agent.thinkingLevel}</span>
+                </div>
+              )}
+              {agent.timeout !== undefined && (
+                <div className="agent-config-item">
+                  <span className="agent-config-label">Timeout</span>
+                  <span className="agent-config-value">
+                    <code>{agent.timeout >= 1000 ? `${agent.timeout / 1000}s` : `${agent.timeout}ms`}</code>
+                  </span>
+                </div>
+              )}
+              {agent.configured !== undefined && (
+                <div className="agent-config-item">
+                  <span className="agent-config-label">Configured</span>
+                  <span className={`agent-config-value ${agent.configured ? 'config-yes' : 'config-no'}`}>
+                    {agent.configured ? 'Yes' : 'No'}
+                  </span>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {/* Workspace Section */}
         <section className="detail-section">
           <h2>Workspace</h2>

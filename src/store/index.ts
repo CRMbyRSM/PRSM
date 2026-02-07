@@ -80,6 +80,7 @@ interface AppState {
   createNewSession: () => Promise<void>
   deleteSession: (sessionId: string) => void
   updateSessionLabel: (sessionId: string, label: string) => Promise<void>
+  spawnSubagentSession: (agentId: string, prompt?: string) => Promise<void>
 
   // Agents
   agents: Agent[]
@@ -319,10 +320,27 @@ export const useStore = create<AppState>()(
 
         await client.updateSession(sessionId, { label })
         set((state) => ({
-          sessions: state.sessions.map((s) => 
+          sessions: state.sessions.map((s) =>
             s.id === sessionId ? { ...s, title: label } : s
           )
         }))
+      },
+      spawnSubagentSession: async (agentId, prompt) => {
+        const { client } = get()
+        if (!client) return
+
+        const session = await client.spawnSession(agentId, prompt)
+        set((state) => ({
+          sessions: [session, ...state.sessions],
+          currentSessionId: session.id,
+          messages: []
+        }))
+
+        // Load any existing messages for the spawned session
+        const messages = await client.getSessionMessages(session.id)
+        if (messages.length > 0) {
+          set({ messages })
+        }
       },
 
       // Agents

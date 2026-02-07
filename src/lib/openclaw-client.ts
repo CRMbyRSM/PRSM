@@ -16,6 +16,8 @@ export interface Session {
   createdAt: string
   updatedAt: string
   lastMessage?: string
+  spawned?: boolean
+  parentSessionId?: string
 }
 
 export interface Agent {
@@ -26,6 +28,10 @@ export interface Agent {
   avatar?: string
   emoji?: string
   theme?: string
+  model?: string
+  thinkingLevel?: string
+  timeout?: number
+  configured?: boolean
 }
 
 export interface AgentFile {
@@ -425,7 +431,9 @@ export class OpenClawClient {
         agentId: s.agentId,
         createdAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
         updatedAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
-        lastMessage: s.lastMessagePreview || s.lastMessage
+        lastMessage: s.lastMessagePreview || s.lastMessage,
+        spawned: s.spawned ?? s.isSpawned ?? undefined,
+        parentSessionId: s.parentSessionId || s.parentKey || undefined
       }))
     } catch {
       return []
@@ -451,6 +459,21 @@ export class OpenClawClient {
 
   async updateSession(sessionId: string, updates: { label?: string }): Promise<void> {
     await this.call('sessions.patch', { key: sessionId, ...updates })
+  }
+
+  async spawnSession(agentId: string, prompt?: string): Promise<Session> {
+    const result = await this.call<any>('sessions.spawn', { agentId, prompt })
+    const s = result?.session || result || {}
+    return {
+      id: s.key || s.id || `spawned-${Date.now()}`,
+      key: s.key || s.id || `spawned-${Date.now()}`,
+      title: s.title || s.label || `Subagent: ${agentId}`,
+      agentId: s.agentId || agentId,
+      createdAt: new Date(s.createdAt || Date.now()).toISOString(),
+      updatedAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
+      spawned: true,
+      parentSessionId: s.parentSessionId || s.parentKey || undefined
+    }
   }
 
   async getSessionMessages(sessionId: string): Promise<Message[]> {
@@ -635,7 +658,11 @@ export class OpenClawClient {
           status: a.status || 'online',
           avatar: avatarUrl,
           emoji,
-          theme: identity.theme
+          theme: identity.theme,
+          model: a.model || a.config?.model || undefined,
+          thinkingLevel: a.thinkingLevel || a.config?.thinkingLevel || a.thinking || undefined,
+          timeout: a.timeout ?? a.config?.timeout ?? undefined,
+          configured: a.configured ?? a.config?.configured ?? undefined
         })
       }
 
