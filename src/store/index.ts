@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile } from '../lib/openclaw-client'
+import * as Platform from '../lib/platform'
 
 interface AgentDetail {
   agent: Agent
@@ -118,7 +119,7 @@ export const useStore = create<AppState>()(
       gatewayToken: '',
       setGatewayToken: (token) => {
         set({ gatewayToken: token })
-        window.electronAPI?.saveToken(token).catch(() => {})
+        Platform.saveToken(token).catch(() => {})
       },
       connected: false,
       connecting: false,
@@ -352,42 +353,39 @@ export const useStore = create<AppState>()(
 
       // Actions
       initializeApp: async () => {
-        // Try to get config from electron (only use defaults if not already configured)
-        if (window.electronAPI) {
-          const config = await window.electronAPI.getConfig()
-          const { serverUrl } = get()
-          if (!serverUrl && config.defaultUrl) {
-            set({ serverUrl: config.defaultUrl })
-          }
-          if (config.theme) {
-            set({ theme: config.theme as 'dark' | 'light' })
-          }
-
-          // Load token from secure storage
-          const secureToken = await window.electronAPI.getToken()
-          if (secureToken) {
-            set({ gatewayToken: secureToken })
-          } else {
-            // Migration: if Zustand has a token from old localStorage but secure storage is empty,
-            // migrate it to secure storage and clear from localStorage
-            const { gatewayToken: legacyToken } = get()
-            if (legacyToken) {
-              await window.electronAPI.saveToken(legacyToken).catch(() => {})
-            }
-          }
-
-          // Clean up legacy gatewayToken from localStorage
-          try {
-            const raw = localStorage.getItem('clawcontrol-storage')
-            if (raw) {
-              const parsed = JSON.parse(raw)
-              if (parsed.state?.gatewayToken) {
-                delete parsed.state.gatewayToken
-                localStorage.setItem('clawcontrol-storage', JSON.stringify(parsed))
-              }
-            }
-          } catch { /* ignore */ }
+        // Get config from platform (Electron, Capacitor, or web)
+        const config = await Platform.getConfig()
+        if (!get().serverUrl && config.defaultUrl) {
+          set({ serverUrl: config.defaultUrl })
         }
+        if (config.theme) {
+          set({ theme: config.theme as 'dark' | 'light' })
+        }
+
+        // Load token from secure storage
+        const secureToken = await Platform.getToken()
+        if (secureToken) {
+          set({ gatewayToken: secureToken })
+        } else {
+          // Migration: if Zustand has a token from old localStorage but secure storage is empty,
+          // migrate it to secure storage
+          const legacyToken = get().gatewayToken
+          if (legacyToken) {
+            await Platform.saveToken(legacyToken).catch(() => {})
+          }
+        }
+
+        // Clean up legacy gatewayToken from localStorage
+        try {
+          const raw = localStorage.getItem('clawcontrol-storage')
+          if (raw) {
+            const parsed = JSON.parse(raw)
+            if (parsed.state?.gatewayToken) {
+              delete parsed.state.gatewayToken
+              localStorage.setItem('clawcontrol-storage', JSON.stringify(parsed))
+            }
+          }
+        } catch { /* ignore */ }
 
         // Show settings if no URL or token configured
         const { serverUrl, gatewayToken } = get()

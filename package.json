@@ -1,7 +1,7 @@
 {
   "name": "clawcontrol",
   "version": "1.0.1",
-  "description": "Desktop client for OpenClaw AI assistant",
+  "description": "Desktop and mobile client for OpenClaw AI assistant",
   "main": "dist-electron/main.js",
   "author": "ClawControl Team",
   "license": "MIT",
@@ -17,9 +17,22 @@
     "test:coverage": "npx vitest run --coverage",
     "test:connection": "node scripts/test-connection.js",
     "lint": "eslint .",
-    "typecheck": "npx -p typescript tsc --noEmit"
+    "typecheck": "npx -p typescript tsc --noEmit",
+    "mobile:build": "npx vite build --config vite.config.mobile.ts",
+    "mobile:sync": "npx vite build --config vite.config.mobile.ts && npx cap sync",
+    "mobile:ios": "npx vite build --config vite.config.mobile.ts && npx cap sync ios && npx cap open ios",
+    "mobile:android": "npx vite build --config vite.config.mobile.ts && npx cap sync android && npx cap open android",
+    "mobile:dev": "npx vite --config vite.config.mobile.ts"
   },
   "dependencies": {
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/browser": "^8.0.0",
+    "@capacitor/core": "^8.0.2",
+    "@capacitor/haptics": "^8.0.0",
+    "@capacitor/keyboard": "^8.0.0",
+    "@capacitor/preferences": "^8.0.0",
+    "@capacitor/splash-screen": "^8.0.0",
+    "@capacitor/status-bar": "^8.0.0",
     "date-fns": "^3.3.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -29,6 +42,9 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.0.2",
+    "@capacitor/cli": "^8.0.2",
+    "@capacitor/ios": "^8.0.2",
     "@eslint/js": "^8.57.1",
     "@testing-library/jest-dom": "^6.4.0",
     "@testing-library/react": "^14.2.0",

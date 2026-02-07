@@ -3071,3 +3071,218 @@ a {
 .sidebar.collapsed .session-spawned-badge {
   display: none;
 }
+
+/* ===== Mobile App (Capacitor) ===== */
+
+/* Safe area insets for iOS notch/dynamic island and Android cutouts */
+.app {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* On native mobile, remove Electron-specific title bar padding */
+body.capacitor-mobile .top-bar {
+  height: var(--top-bar-height);
+  padding-top: 0;
+  -webkit-app-region: unset;
+}
+
+body.capacitor-mobile .sidebar-header {
+  padding-top: var(--space-md);
+  -webkit-app-region: unset;
+}
+
+body.capacitor-mobile .panel-header {
+  padding-top: var(--space-md);
+}
+
+/* Larger touch targets for mobile */
+body.capacitor-mobile .session-item {
+  padding: var(--space-md) var(--space-sm);
+  min-height: 56px;
+}
+
+body.capacitor-mobile .btn {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+body.capacitor-mobile .theme-toggle,
+body.capacitor-mobile .panel-toggle,
+body.capacitor-mobile .settings-btn {
+  width: 44px;
+  height: 44px;
+}
+
+body.capacitor-mobile .menu-btn {
+  width: 44px;
+  height: 44px;
+}
+
+body.capacitor-mobile .send-btn {
+  width: 52px;
+  height: 52px;
+}
+
+/* Always show delete buttons on mobile (no hover) */
+body.capacitor-mobile .session-delete {
+  opacity: 0.6;
+}
+
+/* Prevent text selection on mobile UI elements */
+body.capacitor-mobile .sidebar,
+body.capacitor-mobile .top-bar,
+body.capacitor-mobile .right-panel {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Allow text selection in chat and input areas */
+body.capacitor-mobile .chat-area,
+body.capacitor-mobile .input-container textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Mobile keyboard handling - adjust input area when keyboard is visible */
+body.capacitor-mobile.keyboard-visible .input-area {
+  padding-bottom: var(--space-sm);
+}
+
+body.capacitor-mobile.keyboard-visible .chat-area {
+  padding-bottom: var(--space-sm);
+}
+
+/* Disable hover effects on touch devices */
+@media (hover: none) {
+  .session-item:hover {
+    transform: none;
+  }
+
+  .skill-item:hover {
+    transform: none;
+  }
+
+  .new-chat-btn:hover {
+    transform: none;
+  }
+
+  .send-btn:hover:not(:disabled) {
+    transform: none;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* Mobile-first sidebar behavior */
+body.capacitor-mobile .sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  transform: translateX(-100%);
+  z-index: 101;
+  width: var(--sidebar-width);
+}
+
+body.capacitor-mobile .sidebar.visible {
+  transform: translateX(0);
+}
+
+body.capacitor-mobile .sidebar.collapsed {
+  width: var(--sidebar-width);
+}
+
+body.capacitor-mobile .sidebar-close-mobile {
+  display: flex;
+}
+
+body.capacitor-mobile .sidebar-toggle {
+  display: none;
+}
+
+body.capacitor-mobile .menu-btn {
+  display: flex;
+}
+
+/* Mobile right panel always overlays */
+body.capacitor-mobile .right-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 101;
+  transform: translateX(100%);
+}
+
+body.capacitor-mobile .right-panel.visible {
+  transform: translateX(0);
+}
+
+body.capacitor-mobile .right-panel.hidden {
+  display: flex;
+}
+
+/* Ensure overlay works on mobile */
+body.capacitor-mobile .overlay {
+  display: block !important;
+}
+
+/* Pull-to-refresh prevention */
+body.capacitor-mobile {
+  overscroll-behavior-y: contain;
+}
+
+/* Smooth scrolling on iOS */
+body.capacitor-mobile .chat-area,
+body.capacitor-mobile .sessions-list,
+body.capacitor-mobile .panel-content,
+body.capacitor-mobile .detail-content {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Mobile input area improvements */
+body.capacitor-mobile .input-container textarea {
+  font-size: 16px; /* Prevents iOS auto-zoom on focus */
+}
+
+body.capacitor-mobile .input-footer {
+  display: none;
+}
+
+/* Mobile connection status - compact */
+body.capacitor-mobile .connection-status .status-text {
+  display: none;
+}
+
+body.capacitor-mobile .thinking-label {
+  display: none;
+}
+
+/* Agent profile responsive on small screens */
+@media (max-width: 480px) {
+  .agent-profile-content {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .agent-avatar-large-container {
+    width: 100px;
+    height: 100px;
+    min-width: 100px;
+  }
+
+  .agent-profile-meta {
+    justify-content: center;
+  }
+
+  .detail-meta {
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+}

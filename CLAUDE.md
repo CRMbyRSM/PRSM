@@ -5,9 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
+# Desktop (Electron)
 npm run dev          # Start development server with hot reload
 npm run build:win    # Build for Windows (from Windows)
 npm run build:mac    # Build for macOS (from macOS)
+
+# Mobile (Capacitor)
+npm run mobile:dev     # Start mobile dev server (browser preview)
+npm run mobile:build   # Build web assets for mobile
+npm run mobile:sync    # Build and sync to native projects
+npm run mobile:ios     # Build, sync, and open in Xcode
+npm run mobile:android # Build, sync, and open in Android Studio
+
+# Testing & Quality
 npm run test         # Run tests in watch mode
 npm run test:run     # Run tests once
 npm run typecheck    # TypeScript type checking
@@ -16,12 +26,18 @@ npm run lint         # ESLint
 
 ## Architecture
 
-ClawControl is an Electron desktop client for OpenClaw AI assistant. The app uses a three-process architecture:
+ClawControl is a cross-platform client for OpenClaw AI assistant. It runs as an Electron desktop app and as a native mobile app (iOS/Android) via Capacitor.
 
-### Process Structure
+### Desktop Process Structure (Electron)
 - **Main Process** (`electron/main.ts`): Electron main process, handles window creation and IPC
 - **Preload** (`electron/preload.ts`): Bridge between main and renderer, exposes `window.electronAPI`
 - **Renderer** (`src/`): React application
+
+### Mobile Architecture (Capacitor)
+- **Platform Layer** (`src/lib/platform.ts`): Abstraction over Electron/Capacitor/web APIs (token storage, external links, status bar, keyboard)
+- **Capacitor Config** (`capacitor.config.ts`): Native app configuration
+- **Vite Config** (`vite.config.mobile.ts`): Web build without Electron plugins
+- **Native Projects**: `ios/` and `android/` directories (generated, gitignored)
 
 ### Core Data Flow
 1. **OpenClawClient** (`src/lib/openclaw-client.ts`): Custom WebSocket client implementing a frame-based JSON-RPC protocol (v3). Handles connection, authentication, and real-time message streaming.

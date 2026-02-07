@@ -1,0 +1,207 @@
+// Platform abstraction layer
+// Provides a unified API across Electron, Capacitor (iOS/Android), and web browsers
+
+import { Capacitor } from '@capacitor/core'
+import { Preferences } from '@capacitor/preferences'
+import { Browser } from '@capacitor/browser'
+import { StatusBar, Style } from '@capacitor/status-bar'
+import { Keyboard } from '@capacitor/keyboard'
+import { App } from '@capacitor/app'
+
+export type PlatformType = 'electron' | 'ios' | 'android' | 'web'
+
+export function getPlatform(): PlatformType {
+  if (typeof window !== 'undefined' && (window as any).electronAPI) {
+    return 'electron'
+  }
+  const native = Capacitor.getPlatform()
+  if (native === 'ios') return 'ios'
+  if (native === 'android') return 'android'
+  return 'web'
+}
+
+export function isNativeMobile(): boolean {
+  return Capacitor.isNativePlatform()
+}
+
+export function isMobile(): boolean {
+  const p = getPlatform()
+  return p === 'ios' || p === 'android'
+}
+
+// Token storage
+const TOKEN_KEY = 'clawcontrol-auth-token'
+
+export async function saveToken(token: string): Promise<void> {
+  const platform = getPlatform()
+
+  if (platform === 'electron' && (window as any).electronAPI?.saveToken) {
+    await (window as any).electronAPI.saveToken(token)
+    return
+  }
+
+  if (isNativeMobile()) {
+    await Preferences.set({ key: TOKEN_KEY, value: token })
+    return
+  }
+
+  // Web fallback - localStorage (not ideal for security but functional)
+  localStorage.setItem(TOKEN_KEY, token)
+}
+
+export async function getToken(): Promise<string> {
+  const platform = getPlatform()
+
+  if (platform === 'electron' && (window as any).electronAPI?.getToken) {
+    return await (window as any).electronAPI.getToken()
+  }
+
+  if (isNativeMobile()) {
+    const result = await Preferences.get({ key: TOKEN_KEY })
+    return result.value || ''
+  }
+
+  return localStorage.getItem(TOKEN_KEY) || ''
+}
+
+export async function clearToken(): Promise<void> {
+  if (isNativeMobile()) {
+    await Preferences.remove({ key: TOKEN_KEY })
+    return
+  }
+  localStorage.removeItem(TOKEN_KEY)
+}
+
+// External link handling
+export async function openExternal(url: string): Promise<void> {
+  const platform = getPlatform()
+
+  if (platform === 'electron' && (window as any).electronAPI?.openExternal) {
+    await (window as any).electronAPI.openExternal(url)
+    return
+  }
+
+  if (isNativeMobile()) {
+    await Browser.open({ url })
+    return
+  }
+
+  window.open(url, '_blank')
+}
+
+// Certificate trust (only available on Electron)
+export async function trustHost(hostname: string): Promise<{ trusted: boolean; hostname: string }> {
+  if ((window as any).electronAPI?.trustHost) {
+    return await (window as any).electronAPI.trustHost(hostname)
+  }
+  // On mobile/web, certificate trust is handled by the OS
+  return { trusted: false, hostname }
+}
+
+// Status bar management (mobile only)
+export async function setStatusBarStyle(isDark: boolean): Promise<void> {
+  if (!isNativeMobile()) return
+
+  try {
+    await StatusBar.setStyle({
+      style: isDark ? Style.Dark : Style.Light
+    })
+
+    const platform = getPlatform()
+    if (platform === 'android') {
+      await StatusBar.setBackgroundColor({
+        color: isDark ? '#06080a' : '#f0f3f6'
+      })
+    }
+  } catch {
+    // StatusBar not available
+  }
+}
+
+// Keyboard handling (mobile only)
+export function setupKeyboardListeners(
+  onShow?: (height: number) => void,
+  onHide?: () => void
+): () => void {
+  if (!isNativeMobile()) return () => {}
+
+  const showListener = Keyboard.addListener('keyboardWillShow', (info) => {
+    onShow?.(info.keyboardHeight)
+  })
+  const hideListener = Keyboard.addListener('keyboardWillHide', () => {
+    onHide?.()
+  })
+
+  return () => {
+    showListener.then(l => l.remove())
+    hideListener.then(l => l.remove())
+  }
+}
+
+// App lifecycle (mobile only)
+export function setupAppListeners(
+  onResume?: () => void,
+  onPause?: () => void
+): () => void {
+  if (!isNativeMobile()) return () => {}
+
+  const resumeListener = App.addListener('resume', () => {
+    onResume?.()
+  })
+  const pauseListener = App.addListener('pause', () => {
+    onPause?.()
+  })
+
+  return () => {
+    resumeListener.then(l => l.remove())
+    pauseListener.then(l => l.remove())
+  }
+}
+
+// Handle Android back button
+export function setupBackButton(handler: () => void): () => void {
+  if (getPlatform() !== 'android') return () => {}
+
+  const listener = App.addListener('backButton', ({ canGoBack }) => {
+    if (!canGoBack) {
+      App.exitApp()
+    } else {
+      handler()
+    }
+  })
+
+  return () => {
+    listener.then(l => l.remove())
+  }
+}
+
+// Get config (replaces electronAPI.getConfig)
+export async function getConfig(): Promise<{ defaultUrl?: string; theme?: string }> {
+  const platform = getPlatform()
+
+  if (platform === 'electron' && (window as any).electronAPI?.getConfig) {
+    return await (window as any).electronAPI.getConfig()
+  }
+
+  // On mobile/web, config comes from Preferences
+  if (isNativeMobile()) {
+    const url = await Preferences.get({ key: 'clawcontrol-default-url' })
+    const theme = await Preferences.get({ key: 'clawcontrol-theme' })
+    return {
+      defaultUrl: url.value || undefined,
+      theme: theme.value || undefined
+    }
+  }
+
+  return {}
+}
+
+export async function isEncryptionAvailable(): Promise<boolean> {
+  if ((window as any).electronAPI?.isEncryptionAvailable) {
+    return await (window as any).electronAPI.isEncryptionAvailable()
+  }
+  // On mobile, Preferences uses UserDefaults (iOS) / SharedPreferences (Android)
+  // which are sandboxed but not encrypted. Returns false to reflect this.
+  if (isNativeMobile()) return false
+  return false
+}

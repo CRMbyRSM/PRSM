@@ -10,6 +10,13 @@ import { CertErrorModal } from './components/CertErrorModal'
 import { SkillDetailView } from './components/SkillDetailView'
 import { CronJobDetailView } from './components/CronJobDetailView'
 import { AgentDetailView } from './components/AgentDetailView'
+import {
+  isNativeMobile,
+  setStatusBarStyle,
+  setupKeyboardListeners,
+  setupAppListeners,
+  setupBackButton
+} from './lib/platform'
 
 function App() {
   const { theme, initializeApp, sidebarOpen, rightPanelOpen, mainView } = useStore()
@@ -20,7 +27,59 @@ function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
+
+    // Update mobile status bar to match theme
+    if (isNativeMobile()) {
+      setStatusBarStyle(theme === 'dark')
+    }
   }, [theme])
+
+  // Mobile platform initialization
+  useEffect(() => {
+    if (!isNativeMobile()) return
+
+    // Add mobile body class for CSS targeting
+    document.body.classList.add('capacitor-mobile')
+
+    // Keyboard handling
+    const cleanupKeyboard = setupKeyboardListeners(
+      () => {
+        document.body.classList.add('keyboard-visible')
+      },
+      () => {
+        document.body.classList.remove('keyboard-visible')
+      }
+    )
+
+    // App lifecycle - reconnect on resume
+    const cleanupApp = setupAppListeners(
+      () => {
+        const { connected, connect } = useStore.getState()
+        if (!connected) {
+          connect()
+        }
+      }
+    )
+
+    // Android back button
+    const cleanupBack = setupBackButton(() => {
+      const state = useStore.getState()
+      if (state.mainView !== 'chat') {
+        state.closeDetailView()
+      } else if (state.sidebarOpen) {
+        state.setSidebarOpen(false)
+      } else if (state.rightPanelOpen) {
+        state.setRightPanelOpen(false)
+      }
+    })
+
+    return () => {
+      cleanupKeyboard()
+      cleanupApp()
+      cleanupBack()
+      document.body.classList.remove('capacitor-mobile')
+    }
+  }, [])
 
   return (
     <div className="app">

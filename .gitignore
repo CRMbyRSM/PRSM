@@ -34,3 +34,7 @@ coverage/
 *.tmp
 *.temp
 openclaw-src/
+
+# Capacitor native projects (generated, platform-specific)
+ios/
+android/

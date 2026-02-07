@@ -1,4 +1,5 @@
 import { useStore } from '../store'
+import { trustHost, openExternal, getPlatform } from '../lib/platform'
 
 export function CertErrorModal() {
   const { showCertError, certErrorUrl, hideCertErrorModal, connect } = useStore()
@@ -7,18 +8,19 @@ export function CertErrorModal() {
 
   const handleTrustCert = async () => {
     try {
-      // Extract hostname from the URL
       const url = new URL(certErrorUrl)
       const hostname = url.hostname
+      const platform = getPlatform()
 
-      if (window.electronAPI?.trustHost) {
-        await window.electronAPI.trustHost(hostname)
-        hideCertErrorModal()
-        // Retry connection
-        await connect()
+      if (platform === 'electron') {
+        const result = await trustHost(hostname)
+        if (result.trusted) {
+          hideCertErrorModal()
+          await connect()
+        }
       } else {
-        // Fallback for browser - open in new tab
-        window.open(certErrorUrl, '_blank')
+        // On mobile/web, open the URL in browser so the user can accept the cert
+        await openExternal(certErrorUrl)
       }
     } catch {
       // Trust failed - modal stays open, user can retry or cancel
