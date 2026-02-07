@@ -329,37 +329,50 @@ export class OpenClawClient {
     }
   }
 
+  private extractTextFromContent(content: unknown): string {
+    if (typeof content === 'string') return content
+    if (Array.isArray(content)) {
+      return content
+        .filter((c: any) => c.type === 'text')
+        .map((c: any) => c.text)
+        .join('')
+    }
+    if (content && typeof content === 'object' && 'text' in content) {
+      return String((content as any).text)
+    }
+    return ''
+  }
+
+  private isHeartbeatContent(text: string): boolean {
+    const upper = text.toUpperCase()
+    return upper.includes('HEARTBEAT_OK') || upper.includes('HEARTBEAT.MD')
+  }
+
   private handleNotification(event: string, payload: any): void {
     switch (event) {
       case 'chat':
         if (payload.state === 'delta') {
-          // If agent stream is already active, ignore chat events to prevent duplicates
+          // If agent stream is already active, ignore chat deltas to prevent duplicates
           if (this.activeStreamSource === 'agent') return
           this.activeStreamSource = 'chat'
 
           // Use delta field for incremental content, NOT message.content which is accumulated
           const chunk = payload.delta || payload.message?.delta || payload.errorMessage
-          if (chunk) {
-            const chunkUpper = chunk.toUpperCase()
-            const isHeartbeat = chunkUpper.includes('HEARTBEAT_OK') || chunkUpper.includes('HEARTBEAT.MD')
-            if (!isHeartbeat) {
-              this.emit('streamChunk', chunk)
-            }
+          if (chunk && !this.isHeartbeatContent(chunk)) {
+            this.emit('streamChunk', chunk)
           }
         } else if (payload.state === 'final') {
-          if (payload.message) {
-            const content = payload.message.content
-            if (content) {
-              const contentUpper = content.toUpperCase()
-              const isHeartbeat = contentUpper.includes('HEARTBEAT_OK') || contentUpper.includes('HEARTBEAT.MD')
-              if (!isHeartbeat) {
-                this.emit('message', {
-                  id: payload.message.id,
-                  role: payload.message.role,
-                  content: payload.message.content,
-                  timestamp: new Date().toISOString()
-                })
-              }
+          // Only emit the final message if agent wasn't the active stream source.
+          // When agent was active, the message content was already built up via deltas.
+          if (this.activeStreamSource !== 'agent' && payload.message) {
+            const text = this.extractTextFromContent(payload.message.content)
+            if (text && !this.isHeartbeatContent(text)) {
+              this.emit('message', {
+                id: payload.message.id,
+                role: payload.message.role,
+                content: text,
+                timestamp: new Date().toISOString()
+              })
             }
           }
           this.activeStreamSource = null
@@ -376,20 +389,18 @@ export class OpenClawClient {
           this.activeStreamSource = 'agent'
 
           // payload.data is { text: string, delta: string }
-          const content = payload.data?.delta
+          const delta = payload.data?.delta
 
-          if (typeof content === 'string') {
-            const contentUpper = content.toUpperCase()
-            const isHeartbeat = contentUpper.includes('HEARTBEAT_OK') || contentUpper.includes('HEARTBEAT.MD')
-            if (!isHeartbeat) {
-              this.emit('streamChunk', content)
-            }
+          if (typeof delta === 'string' && !this.isHeartbeatContent(delta)) {
+            this.emit('streamChunk', delta)
           }
         } else if (payload.stream === 'lifecycle') {
-           if (payload.data?.state === 'complete') {
-             this.activeStreamSource = null
-             this.emit('streamEnd')
-           }
+          const phase = payload.data?.phase
+          if (phase === 'end' || phase === 'error') {
+            // Don't reset activeStreamSource here — let the chat final event
+            // handle cleanup so it knows whether to skip its duplicate message.
+            this.emit('streamEnd')
+          }
         }
         break
       default:
