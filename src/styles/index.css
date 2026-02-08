@@ -1202,7 +1202,7 @@ a {
 .message-content {
   flex: 1;
   min-width: 0;
-  max-width: 80%;
+  max-width: 92%;
 }
 
 .message.user .message-content {
@@ -2635,7 +2635,7 @@ a {
   }
 
   .message-content {
-    max-width: 90%;
+    max-width: 95%;
   }
 
   .chat-area {
