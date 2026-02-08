@@ -7,6 +7,26 @@ import remarkGfm from 'remark-gfm'
 import rehypeSanitize from 'rehype-sanitize'
 import logoUrl from '../../build/icon.png'
 
+/** Detect the channel/source of a message from its content */
+function detectChannel(message: Message): string {
+  const c = message.content || ''
+  if (/\[Slack\s/i.test(c) || /Slack DM from/i.test(c)) return 'slack'
+  if (/\[Telegram\s/i.test(c) || /Telegram.*from/i.test(c)) return 'telegram'
+  if (/\[Discord\s/i.test(c) || /Discord.*from/i.test(c)) return 'discord'
+  if (/\[WhatsApp\s/i.test(c) || /WhatsApp.*from/i.test(c)) return 'whatsapp'
+  if (message.role === 'system') return 'system'
+  return 'direct'
+}
+
+const channelLabels: Record<string, { label: string; icon: string }> = {
+  slack: { label: 'Slack', icon: '💬' },
+  telegram: { label: 'Telegram', icon: '✈️' },
+  discord: { label: 'Discord', icon: '🎮' },
+  whatsapp: { label: 'WhatsApp', icon: '📱' },
+  system: { label: 'System', icon: '⚙️' },
+  direct: { label: 'ClawControlRSM', icon: '🖥️' },
+}
+
 export function ChatArea() {
   const { messages, isStreaming, agents, currentAgentId } = useStore()
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -21,7 +41,7 @@ export function ChatArea() {
       <div className="chat-area">
         <div className="chat-empty">
           <div className="empty-logo">
-            <img src={logoUrl} alt="ClawControl logo" />
+            <img src={logoUrl} alt="ClawControlRSM logo" />
           </div>
           <h2>Start a Conversation</h2>
           <p>Send a message to begin chatting with {currentAgent?.name || 'the AI assistant'}</p>
@@ -41,18 +61,26 @@ export function ChatArea() {
     )
   }
 
+  // Track channel changes for dividers
+  let lastChannel = ''
+
   return (
     <div className="chat-area">
       <div className="chat-container">
         {messages.map((message, index) => {
           const isNewDay = index === 0 || !isSameDay(new Date(message.timestamp), new Date(messages[index - 1].timestamp))
+          const currentChannel = detectChannel(message)
+          const showChannelDivider = currentChannel !== lastChannel && lastChannel !== ''
+          lastChannel = currentChannel
           
           return (
             <Fragment key={message.id}>
               {isNewDay && <DateSeparator date={new Date(message.timestamp)} />}
+              {showChannelDivider && <ChannelDivider channel={currentChannel} />}
               <MessageBubble
                 message={message}
                 agentName={currentAgent?.name}
+                channel={currentChannel}
               />
             </Fragment>
           )
@@ -96,15 +124,33 @@ function DateSeparator({ date }: { date: Date }) {
   )
 }
 
+function ChannelDivider({ channel }: { channel: string }) {
+  const info = channelLabels[channel] || channelLabels.direct
+  return (
+    <div className={`channel-divider channel-${channel}`}>
+      <div className="channel-divider-line" />
+      <span className="channel-divider-label">
+        <span className="channel-divider-icon">{info.icon}</span>
+        {info.label}
+      </span>
+      <div className="channel-divider-line" />
+    </div>
+  )
+}
+
 function MessageBubble({
   message,
-  agentName
+  agentName,
+  channel
 }: {
   message: Message
   agentName?: string
+  channel?: string
 }) {
   const isUser = message.role === 'user'
   const time = format(new Date(message.timestamp), 'h:mm a')
+  const showBadge = channel && channel !== 'direct'
+  const info = channel ? (channelLabels[channel] || channelLabels.direct) : null
 
   return (
     <div className={`message ${isUser ? 'user' : 'agent'}`}>
@@ -121,16 +167,38 @@ function MessageBubble({
           {isUser ? (
             <>
               <span className="message-time">{time}</span>
+              {showBadge && info && <span className={`channel-badge channel-badge-${channel}`}>{info.icon} {info.label}</span>}
               <span className="message-author">You</span>
             </>
           ) : (
             <>
               <span className="message-author">{agentName || 'Assistant'}</span>
+              {showBadge && info && <span className={`channel-badge channel-badge-${channel}`}>{info.icon} {info.label}</span>}
               <span className="message-time">{time}</span>
             </>
           )}
         </div>
         <div className="message-bubble">
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="message-attachments">
+              {message.attachments.map((att, i) => (
+                <div key={i} className="attachment-thumbnail">
+                  {att.type === 'image' ? (
+                    <img
+                      src={`data:${att.mimeType};base64,${att.content}`}
+                      alt={`Attachment ${i + 1}`}
+                      className="attachment-image"
+                    />
+                  ) : (
+                    <div className="attachment-file">
+                      <span className="attachment-icon">📎</span>
+                      <span className="attachment-name">{att.mimeType}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {message.thinking && (
             <div className="thinking-block">
               <div className="thinking-header">
@@ -176,6 +244,47 @@ function MessageContent({ content }: { content: string }) {
             <code className={className} {...rest}>
               {children}
             </code>
+          )
+        },
+        a(props) {
+          const { href, children, ...rest } = props
+          return (
+            <a
+              {...rest}
+              href={href}
+              onClick={(e) => {
+                e.preventDefault()
+                if (href) {
+                  if (window.electronAPI?.openExternal) {
+                    window.electronAPI.openExternal(href)
+                  } else {
+                    window.open(href, '_blank')
+                  }
+                }
+              }}
+              style={{ cursor: 'pointer' }}
+            >
+              {children}
+            </a>
+          )
+        },
+        img(props) {
+          return (
+            <img
+              {...props}
+              className="message-image"
+              loading="lazy"
+              alt={props.alt || 'Image'}
+              onClick={() => {
+                if (props.src) {
+                  if (window.electronAPI?.openExternal) {
+                    window.electronAPI.openExternal(props.src)
+                  } else {
+                    window.open(props.src, '_blank')
+                  }
+                }
+              }}
+            />
           )
         }
       }}

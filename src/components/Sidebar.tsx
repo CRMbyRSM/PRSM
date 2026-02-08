@@ -57,8 +57,8 @@ export function Sidebar() {
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${sidebarOpen ? 'visible' : ''}`}>
         <div className="sidebar-header">
           <div className="logo">
-            <img className="logo-icon" src={logoUrl} alt="ClawControl logo" />
-            <span className="logo-text">ClawControl</span>
+            <img className="logo-icon" src={logoUrl} alt="ClawControlRSM logo" />
+            <span className="logo-text">ClawControlRSM</span>
           </div>
           <button
             className="sidebar-toggle"

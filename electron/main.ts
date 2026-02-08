@@ -89,6 +89,32 @@ function createWindow() {
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
 
+  // Open external links in the system browser, not inside the app
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        shell.openExternal(url)
+      }
+    } catch { /* ignore */ }
+    return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    // Allow dev server reloads
+    if (process.env.VITE_DEV_SERVER_URL && url.startsWith(process.env.VITE_DEV_SERVER_URL)) return
+    // Allow loading the app itself
+    if (url.startsWith('file://')) return
+    // Everything else opens in system browser
+    event.preventDefault()
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        shell.openExternal(url)
+      }
+    } catch { /* ignore */ }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })

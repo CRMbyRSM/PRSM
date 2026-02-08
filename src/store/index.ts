@@ -99,7 +99,7 @@ interface AppState {
   initializeApp: () => Promise<void>
   connect: () => Promise<void>
   disconnect: () => void
-  sendMessage: (content: string) => Promise<void>
+  sendMessage: (content: string, attachments?: Array<{type: string, mimeType: string, content: string}>) => Promise<void>
   fetchSessions: () => Promise<void>
   fetchAgents: () => Promise<void>
   fetchSkills: () => Promise<void>
@@ -518,6 +518,8 @@ export const useStore = create<AppState>()(
               const messages = [...state.messages]
               const lastMessage = messages[messages.length - 1]
 
+              // Append to the current assistant message within the same turn.
+              // A new bubble is only created after a user message or non-assistant message.
               if (lastMessage && lastMessage.role === 'assistant') {
                 const nextContent = kind === 'replace'
                   ? text
@@ -587,9 +589,9 @@ export const useStore = create<AppState>()(
         set({ client: null, connected: false })
       },
 
-      sendMessage: async (content: string) => {
+      sendMessage: async (content: string, attachments?: Array<{type: string, mimeType: string, content: string}>) => {
         const { client, currentSessionId, thinkingEnabled, currentAgentId } = get()
-        if (!client || !content.trim()) return
+        if (!client || (!content.trim() && (!attachments || attachments.length === 0))) return
 
         const selectedSessionId = currentSessionId
         const requestedSessionId = selectedSessionId || `session-${Date.now()}`
@@ -626,12 +628,13 @@ export const useStore = create<AppState>()(
           streamingSessionId: requestedSessionId
         })
 
-        // Add user message immediately
+        // Add user message immediately (with attachment thumbnails if present)
         const userMessage: Message = {
           id: Date.now().toString(),
           role: 'user',
           content,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          attachments: attachments && attachments.length > 0 ? attachments : undefined
         }
         set((state) => ({ messages: [...state.messages, userMessage] }))
 
@@ -641,7 +644,8 @@ export const useStore = create<AppState>()(
             sessionId: requestedSessionId,
             content,
             agentId: currentAgentId || undefined,
-            thinking: thinkingEnabled
+            thinking: thinkingEnabled,
+            attachments
           })
 
           const serverKey = response.sessionKey?.trim() || requestedSessionId
@@ -697,7 +701,8 @@ export const useStore = create<AppState>()(
 
           // Sync canonical titles/metadata from the server.
           get().fetchSessions().catch(() => {})
-        } catch {
+        } catch (err) {
+          console.error('[ClawControlRSM] sendMessage failed:', err)
           // If send fails, stop streaming state so UI remains usable.
           set({ isStreaming: false, streamingSessionId: null })
         }
