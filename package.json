@@ -1,6 +1,6 @@
 {
   "name": "clawcontrol",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Desktop and mobile client for OpenClaw AI assistant",
   "main": "dist-electron/main.js",
   "author": "ClawControlRSM Team",
@@ -103,8 +103,7 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        "AppImage"
       ],
       "icon": "build/icon.png",
       "category": "Utility"
