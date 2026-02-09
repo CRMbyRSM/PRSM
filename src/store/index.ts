@@ -397,52 +397,57 @@ export const useStore = create<AppState>()(
 
       // Actions
       initializeApp: async () => {
-        // Get config from platform (Electron, Capacitor, or web)
-        const config = await Platform.getConfig()
-        if (!get().serverUrl && config.defaultUrl) {
-          set({ serverUrl: config.defaultUrl })
-        }
-        if (config.theme) {
-          set({ theme: config.theme as 'dark' | 'light' })
-        }
-
-        // Load token from secure storage
-        const secureToken = await Platform.getToken()
-        if (secureToken) {
-          set({ gatewayToken: secureToken })
-        } else {
-          // Migration: if Zustand has a token from old localStorage but secure storage is empty,
-          // migrate it to secure storage
-          const legacyToken = get().gatewayToken
-          if (legacyToken) {
-            await Platform.saveToken(legacyToken).catch(() => {})
-          }
-        }
-
-        // Clean up legacy gatewayToken from localStorage
         try {
-          const raw = localStorage.getItem('clawcontrol-storage')
-          if (raw) {
-            const parsed = JSON.parse(raw)
-            if (parsed.state?.gatewayToken) {
-              delete parsed.state.gatewayToken
-              localStorage.setItem('clawcontrol-storage', JSON.stringify(parsed))
+          // Get config from platform (Electron, Capacitor, or web)
+          const config = await Platform.getConfig().catch(() => ({ defaultUrl: '', theme: '' }))
+          if (!get().serverUrl && config.defaultUrl) {
+            set({ serverUrl: config.defaultUrl })
+          }
+          if (config.theme) {
+            set({ theme: config.theme as 'dark' | 'light' })
+          }
+
+          // Load token from secure storage
+          const secureToken = await Platform.getToken().catch(() => '')
+          if (secureToken) {
+            set({ gatewayToken: secureToken })
+          } else {
+            // Migration: if Zustand has a token from old localStorage but secure storage is empty,
+            // migrate it to secure storage
+            const legacyToken = get().gatewayToken
+            if (legacyToken) {
+              await Platform.saveToken(legacyToken).catch(() => {})
             }
           }
-        } catch { /* ignore */ }
 
-        // Show settings if no URL or token configured
-        const { serverUrl, gatewayToken } = get()
-        if (!serverUrl || !gatewayToken) {
-          set({ showSettings: true })
-          return
-        }
+          // Clean up legacy gatewayToken from localStorage
+          try {
+            const raw = localStorage.getItem('clawcontrol-storage')
+            if (raw) {
+              const parsed = JSON.parse(raw)
+              if (parsed.state?.gatewayToken) {
+                delete parsed.state.gatewayToken
+                localStorage.setItem('clawcontrol-storage', JSON.stringify(parsed))
+              }
+            }
+          } catch { /* ignore */ }
 
-        // Auto-connect
-        try {
-          await get().connect()
-        } catch {
-          // Show settings on connection failure
+          // Show settings if no URL or token configured
+          const { serverUrl, gatewayToken } = get()
+          if (!serverUrl || !gatewayToken) {
+            set({ showSettings: true })
+            return
+          }
+
+          // Auto-connect
+          try {
+            await get().connect()
+          } catch {
+            // Show settings on connection failure
+            set({ showSettings: true })
+          }
+        } catch (err) {
+          console.error('[ClawControlRSM] initializeApp failed:', err)
           set({ showSettings: true })
         }
       },

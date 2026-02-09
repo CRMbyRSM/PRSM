@@ -816,6 +816,24 @@ a {
   height: 14px;
 }
 
+.session-name-input {
+  background: var(--bg-hover);
+  border: 1px solid var(--accent-cyan);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 1rem;
+  padding: 2px 8px;
+  outline: none;
+  min-width: 120px;
+  max-width: 300px;
+}
+
+.session-name-input:focus {
+  box-shadow: 0 0 0 2px var(--accent-cyan-subtle);
+}
+
 .connection-status {
   display: flex;
   align-items: center;

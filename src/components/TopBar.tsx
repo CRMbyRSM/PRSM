@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react'
 import { useStore } from '../store'
 
 export function TopBar() {
@@ -11,11 +12,41 @@ export function TopBar() {
     sessions,
     currentSessionId,
     connected,
-    setShowSettings
+    setShowSettings,
+    updateSessionLabel
   } = useStore()
+
+  const [isEditing, setIsEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const currentSession = sessions.find((s) => s.id === currentSessionId)
   const sessionName = currentSession?.title || 'New Chat'
+
+  const startEditing = () => {
+    if (!currentSessionId) return
+    setEditValue(sessionName)
+    setIsEditing(true)
+  }
+
+  const commitEdit = () => {
+    const trimmed = editValue.trim()
+    if (trimmed && trimmed !== sessionName && currentSessionId) {
+      updateSessionLabel(currentSessionId, trimmed)
+    }
+    setIsEditing(false)
+  }
+
+  const cancelEdit = () => {
+    setIsEditing(false)
+  }
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [isEditing])
 
   return (
     <header className="top-bar">
@@ -30,13 +61,31 @@ export function TopBar() {
       </button>
 
       <div className="session-name">
-        <span>{sessionName}</span>
-        <button className="edit-btn" aria-label="Edit session name">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-          </svg>
-        </button>
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            className="session-name-input"
+            type="text"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitEdit()
+              if (e.key === 'Escape') cancelEdit()
+            }}
+            maxLength={100}
+          />
+        ) : (
+          <>
+            <span onClick={startEditing} style={{ cursor: 'pointer' }}>{sessionName}</span>
+            <button className="edit-btn" onClick={startEditing} aria-label="Edit session name">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+            </button>
+          </>
+        )}
       </div>
 
       <div className="connection-status">
