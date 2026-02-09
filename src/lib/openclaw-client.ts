@@ -248,7 +248,7 @@ export class OpenClawClient {
         client: {
           id: 'gateway-client',
           displayName: 'ClawControlRSM',
-          version: '1.5.5',
+          version: '1.5.6',
           platform: 'web',
           mode: 'backend'
         },
@@ -496,23 +496,32 @@ export class OpenClawClient {
       })
       
       const sessions = Array.isArray(result) ? result : (result?.sessions || [])
-      return sessions.map((s: any) => ({
-        id: s.key || s.id || `session-${Math.random()}`,
-        key: s.key || s.id,
-        title: s.title || s.label || s.key || s.id || 'New Chat',
-        agentId: s.agentId,
-        createdAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
-        updatedAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
-        lastMessage: (() => {
-          const raw = s.lastMessagePreview || s.lastMessage
-          if (!raw) return undefined
-          if (typeof raw === 'string') return raw
-          if (typeof raw === 'object' && raw.content) return typeof raw.content === 'string' ? raw.content : String(raw.content)
-          return String(raw)
-        })(),
-        spawned: s.spawned ?? s.isSpawned ?? undefined,
-        parentSessionId: s.parentSessionId || s.parentKey || undefined
-      }))
+      return sessions.map((s: any) => {
+        // Force-stringify everything to prevent React error #310
+        const safeStr = (v: any, fallback = ''): string => {
+          if (v == null) return fallback
+          if (typeof v === 'string') return v
+          if (typeof v === 'object') return JSON.stringify(v)
+          return String(v)
+        }
+        return {
+          id: safeStr(s.key || s.id, `session-${Math.random()}`),
+          key: safeStr(s.key || s.id),
+          title: safeStr(s.title || s.label || s.key || s.id, 'New Chat'),
+          agentId: s.agentId ? String(s.agentId) : undefined,
+          createdAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
+          updatedAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
+          lastMessage: (() => {
+            const raw = s.lastMessagePreview || s.lastMessage
+            if (!raw) return undefined
+            if (typeof raw === 'string') return raw
+            if (typeof raw === 'object' && raw.content) return typeof raw.content === 'string' ? raw.content : String(raw.content)
+            return String(raw)
+          })(),
+          spawned: s.spawned ?? s.isSpawned ?? undefined,
+          parentSessionId: s.parentSessionId || s.parentKey ? String(s.parentSessionId || s.parentKey) : undefined
+        }
+      })
     } catch {
       return []
     }
@@ -747,13 +756,13 @@ export class OpenClawClient {
         enrichedAgents.push({
           id: agentId,
           name: String(identity.name || a.name || agentId || 'Unnamed Agent'),
-          description: a.description || identity.theme ? String(a.description || identity.theme) : undefined,
+          description: (a.description || identity.theme) ? String(a.description || identity.theme) : undefined,
           status: a.status || 'online',
           avatar: avatarUrl,
           emoji,
-          theme: identity.theme,
-          model: a.model || a.config?.model || undefined,
-          thinkingLevel: a.thinkingLevel || a.config?.thinkingLevel || a.thinking || undefined,
+          theme: identity.theme ? String(identity.theme) : undefined,
+          model: (a.model || a.config?.model) ? String(a.model || a.config?.model) : undefined,
+          thinkingLevel: (a.thinkingLevel || a.config?.thinkingLevel || a.thinking) ? String(a.thinkingLevel || a.config?.thinkingLevel || a.thinking) : undefined,
           timeout: a.timeout ?? a.config?.timeout ?? undefined,
           configured: a.configured ?? a.config?.configured ?? undefined
         })
@@ -814,11 +823,11 @@ export class OpenClawClient {
         description: String(s.description || ''),
         triggers: Array.isArray(s.triggers) ? s.triggers.map(String) : [],
         enabled: !s.disabled,
-        emoji: s.emoji,
-        homepage: s.homepage,
-        source: s.source,
+        emoji: s.emoji ? String(s.emoji) : undefined,
+        homepage: s.homepage ? String(s.homepage) : undefined,
+        source: s.source ? String(s.source) : undefined,
         bundled: s.bundled,
-        filePath: s.filePath,
+        filePath: s.filePath ? String(s.filePath) : undefined,
         eligible: s.eligible,
         always: s.always,
         requirements: s.requirements,
@@ -856,11 +865,11 @@ export class OpenClawClient {
         }
 
         return {
-          id: c.id || c.name || `cron-${Math.random()}`,
-          name: c.name || 'Unnamed Job',
+          id: String(c.id || c.name || `cron-${Math.random()}`),
+          name: String(c.name || 'Unnamed Job'),
           schedule: String(schedule || 'N/A'),
           status: c.status || 'active',
-          description: c.description,
+          description: c.description ? String(c.description) : undefined,
           nextRun: nextRun ? String(nextRun) : undefined
         }
       })
@@ -889,13 +898,13 @@ export class OpenClawClient {
       }
 
       return {
-        id: result.id || result.name || cronId,
-        name: result.name || 'Unnamed Job',
+        id: String(result.id || result.name || cronId),
+        name: String(result.name || 'Unnamed Job'),
         schedule: String(schedule || 'N/A'),
         status: result.status || 'active',
-        description: result.description,
+        description: result.description ? String(result.description) : undefined,
         nextRun: nextRun ? String(nextRun) : undefined,
-        content: result.content || result.markdown || result.readme || ''
+        content: (result.content || result.markdown || result.readme) ? String(result.content || result.markdown || result.readme) : ''
       }
     } catch {
       return null

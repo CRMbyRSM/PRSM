@@ -21,10 +21,13 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[ClawControlRSM] React error boundary caught:', error, info)
+    // Store component stack for display
+    this.setState({ error, componentStack: info.componentStack || '' } as any)
   }
 
   render() {
     if (this.state.hasError) {
+      const componentStack = (this.state as any).componentStack || ''
       return (
         <div style={{
           display: 'flex',
@@ -37,11 +40,31 @@ export class ErrorBoundary extends Component<Props, State> {
           color: '#e0e6ed',
           fontFamily: 'system-ui, sans-serif',
           padding: '2rem',
-          textAlign: 'center'
+          textAlign: 'center',
+          overflow: 'auto'
         }}>
           <h1 style={{ color: '#ef4444', marginBottom: '1rem' }}>Something went wrong</h1>
-          <p style={{ color: '#8594a3', marginBottom: '1.5rem', maxWidth: '500px' }}>
+          <p style={{ color: '#8594a3', marginBottom: '0.5rem', maxWidth: '600px' }}>
             {this.state.error?.message || 'An unexpected error occurred'}
+          </p>
+          {componentStack && (
+            <pre style={{
+              background: '#1a1d24',
+              color: '#f59e0b',
+              padding: '12px',
+              borderRadius: '8px',
+              fontSize: '0.75rem',
+              maxWidth: '600px',
+              maxHeight: '200px',
+              overflow: 'auto',
+              textAlign: 'left',
+              marginBottom: '1rem',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all'
+            }}>{componentStack}</pre>
+          )}
+          <p style={{ color: '#4a5568', fontSize: '0.8rem', marginBottom: '1.5rem', maxWidth: '500px' }}>
+            Screenshot this and send to Antonella for debugging
           </p>
           <button
             onClick={() => {
