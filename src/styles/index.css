@@ -2030,6 +2030,16 @@ a {
   color: var(--accent-amber);
 }
 
+.skill-status.missing {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.skill-item .skill-icon .skill-emoji {
+  font-size: 1rem;
+  line-height: 1;
+}
+
 /* ===== Detail View ===== */
 .detail-view {
   flex: 1;
