@@ -67,21 +67,19 @@ function createWindow() {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      devTools: !app.isPackaged
+      devTools: true
     },
     titleBarStyle: 'hiddenInset',
     frame: process.platform === 'darwin' ? true : true,
     backgroundColor: '#0d1117'
   })
 
-  // Allow DevTools shortcuts only in development
-  if (!app.isPackaged) {
-    mainWindow.webContents.on('before-input-event', (event, input) => {
-      if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
-        mainWindow?.webContents.toggleDevTools()
-      }
-    })
-  }
+  // Allow DevTools shortcuts
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
+      mainWindow?.webContents.toggleDevTools()
+    }
+  })
 
   // Enable context menu for copy/paste
   mainWindow.webContents.on('context-menu', (_event, params) => {
