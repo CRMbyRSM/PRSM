@@ -107,9 +107,18 @@ export function ChatArea() {
   // state which would cause a secondary error #310 on re-render.
   const messagesWithMeta = useMemo(() => {
     try {
+      // Filter out heartbeat messages (prompt + HEARTBEAT_OK responses)
+      const isHeartbeat = (m: Message) => {
+        const c = (m.content || '').trim()
+        if (c === 'HEARTBEAT_OK') return true
+        if (m.role === 'user' && c.startsWith('Read HEARTBEAT.md')) return true
+        return false
+      }
+
       let lastChannel = ''
       return messages
         .filter((m): m is Message => m != null && typeof m === 'object')
+        .filter((m) => !isHeartbeat(m))
         .map((message, index, arr) => {
           let isNewDay = index === 0
           if (!isNewDay) {
