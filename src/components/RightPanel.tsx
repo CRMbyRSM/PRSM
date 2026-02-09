@@ -41,13 +41,21 @@ export function RightPanel() {
       job.schedule.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const sessionPins = currentSessionId
-    ? pinnedMessages.filter((p) => p.sessionId === currentSessionId)
-    : []
+  // Show ALL pins across sessions, sorted newest-pinned first
+  const allPins = [...pinnedMessages].sort(
+    (a, b) => new Date(b.pinnedAt).getTime() - new Date(a.pinnedAt).getTime()
+  )
 
-  const filteredPins = sessionPins.filter(
+  const filteredPins = allPins.filter(
     (pin) => pin.content.toLowerCase().includes(searchQuery.toLowerCase())
   )
+
+  // Build session name lookup from sessions list
+  const sessions = useStore((s) => s.sessions)
+  const sessionNameMap: Record<string, string> = {}
+  for (const s of sessions) {
+    sessionNameMap[s.id] = s.label || s.id.slice(0, 8)
+  }
 
   return (
     <aside className={`right-panel ${rightPanelOpen ? 'visible' : 'hidden'}`}>
@@ -60,7 +68,7 @@ export function RightPanel() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 14, height: 14, marginRight: 4, verticalAlign: -2 }}>
               <path d="M12 2l3 9h9l-7 5 3 9-8-6-8 6 3-9-7-5h9l3-9z" />
             </svg>
-            Pins{sessionPins.length > 0 ? ` (${sessionPins.length})` : ''}
+            Pins{allPins.length > 0 ? ` (${allPins.length})` : ''}
           </button>
           <button
             className={`panel-tab ${rightPanelTab === 'skills' ? 'active' : ''}`}
@@ -103,7 +111,7 @@ export function RightPanel() {
 
       {rightPanelTab === 'pins' ? (
         <div className="panel-content">
-          {sessionPins.length > 0 ? (
+          {allPins.length > 0 ? (
             <div className="panel-search">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="11" cy="11" r="8" />
@@ -119,7 +127,12 @@ export function RightPanel() {
           ) : null}
           {filteredPins.length > 0 ? (
             filteredPins.map((pin) => (
-              <PinItem key={pin.id} pin={pin} onUnpin={() => unpinMessage(pin.id)} />
+              <PinItem
+                key={pin.id}
+                pin={pin}
+                sessionName={sessionNameMap[pin.sessionId] || pin.sessionId.slice(0, 8)}
+                onUnpin={() => unpinMessage(pin.id)}
+              />
             ))
           ) : (
             <div className="empty-panel">
@@ -171,7 +184,7 @@ export function RightPanel() {
 }
 
 // Pinned message card
-function PinItem({ pin, onUnpin }: { pin: PinnedMessage; onUnpin: () => void }) {
+function PinItem({ pin, sessionName, onUnpin }: { pin: PinnedMessage; sessionName: string; onUnpin: () => void }) {
   const [expanded, setExpanded] = useState(false)
   const isLong = pin.content.length > 300
   const displayContent = isLong && !expanded ? pin.content.slice(0, 300) + '…' : pin.content
@@ -189,6 +202,7 @@ function PinItem({ pin, onUnpin }: { pin: PinnedMessage; onUnpin: () => void }) 
   return (
     <div className="pin-item">
       <div className="pin-item-header">
+        <span className="pin-item-session" title={pin.sessionId}>{safe(sessionName)}</span>
         <span className={`pin-item-role ${pin.role}`}>
           {pin.role === 'user' ? 'You' : pin.role === 'assistant' ? 'Assistant' : 'System'}
         </span>

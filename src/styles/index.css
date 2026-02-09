@@ -2083,6 +2083,19 @@ a {
   margin-bottom: var(--space-sm);
 }
 
+.pin-item-session {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 4px;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pin-item-role {
   font-family: var(--font-mono);
   font-size: 0.7rem;
