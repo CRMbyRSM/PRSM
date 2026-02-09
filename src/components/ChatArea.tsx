@@ -1,4 +1,4 @@
-import { useRef, useEffect, Fragment, memo, useMemo, useCallback } from 'react'
+import { useRef, useEffect, Fragment, memo, useMemo, useCallback, Component, ErrorInfo, ReactNode } from 'react'
 import { useStore } from '../store'
 import { Message } from '../lib/openclaw-client'
 import { format, isSameDay } from 'date-fns'
@@ -7,6 +7,56 @@ import remarkGfm from 'remark-gfm'
 import rehypeSanitize from 'rehype-sanitize'
 import { safe } from '../lib/safe-render'
 import logoUrl from '../../build/icon.png'
+
+/**
+ * Per-message error boundary — catches React #310 and other render errors
+ * for individual messages instead of crashing the whole app.
+ */
+class MessageErrorBoundary extends Component<
+  { children: ReactNode; messageId: string; messageContent: string },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: any) {
+    super(props)
+    this.state = { hasError: false, error: '' }
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message || 'Unknown render error' }
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    // Log full details for remote debugging
+    console.error(
+      `[ClawControlRSM] Message render crash — id=${this.props.messageId}`,
+      '\nError:', error.message,
+      '\nContent type:', typeof this.props.messageContent,
+      '\nContent preview:', String(this.props.messageContent).slice(0, 500),
+      '\nContent full (for debugging):', this.props.messageContent,
+      '\nComponent stack:', info.componentStack
+    )
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="message agent" style={{ opacity: 0.7 }}>
+          <div className="message-content">
+            <div className="message-bubble" style={{ border: '1px solid #ef444466', background: '#1a1d24' }}>
+              <p style={{ color: '#f87171', fontSize: '0.8rem', margin: '0 0 4px' }}>
+                ⚠️ This message failed to render ({this.state.error})
+              </p>
+              <pre style={{
+                fontSize: '0.75rem', color: '#8594a3', whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word', maxHeight: '200px', overflow: 'auto', margin: 0
+              }}>
+                {String(this.props.messageContent).slice(0, 2000)}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 /** Detect the channel/source of a message from its content */
 function detectChannel(message: Message): string {
@@ -99,12 +149,14 @@ export function ChatArea() {
             <Fragment key={message.id}>
               {isNewDay && <DateSeparator date={new Date(message.timestamp)} />}
               {showChannelDivider && <ChannelDivider channel={channel} />}
-              <MessageBubble
-                message={message}
-                agentName={currentAgent?.name}
-                channel={channel}
-                isStreaming={isLastMessage && isStreaming}
-              />
+              <MessageErrorBoundary messageId={message.id} messageContent={message.content}>
+                <MessageBubble
+                  message={message}
+                  agentName={currentAgent?.name}
+                  channel={channel}
+                  isStreaming={isLastMessage && isStreaming}
+                />
+              </MessageErrorBoundary>
             </Fragment>
           )
         })}
@@ -230,18 +282,51 @@ const markdownComponents = {
   }
 }
 
+/**
+ * SafeMarkdown error boundary — catches crashes inside ReactMarkdown/remark/rehype
+ * and falls back to displaying raw text content.
+ */
+class SafeMarkdownBoundary extends Component<
+  { children: ReactNode; rawContent: string },
+  { hasError: boolean }
+> {
+  constructor(props: any) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(
+      '[ClawControlRSM] ReactMarkdown render crash',
+      '\nError:', error.message,
+      '\nContent preview:', this.props.rawContent?.slice(0, 500),
+      '\nStack:', info.componentStack
+    )
+  }
+  render() {
+    if (this.state.hasError) {
+      return <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>{this.props.rawContent}</pre>
+    }
+    return this.props.children
+  }
+}
+
 /** Memoized message content — only re-parses markdown when content changes */
 const MessageContent = memo(function MessageContent({ content }: { content: string }) {
   // Nuclear safety: ensure content is always a string no matter what
   const safeContent = typeof content === 'string' ? content : safe(content)
   return (
-    <ReactMarkdown
-      remarkPlugins={remarkPlugins}
-      rehypePlugins={rehypePlugins}
-      components={markdownComponents}
-    >
-      {safeContent}
-    </ReactMarkdown>
+    <SafeMarkdownBoundary rawContent={safeContent}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
+        components={markdownComponents}
+      >
+        {safeContent}
+      </ReactMarkdown>
+    </SafeMarkdownBoundary>
   )
 })
 
