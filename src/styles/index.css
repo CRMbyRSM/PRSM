@@ -1640,6 +1640,117 @@ a {
   height: 20px;
 }
 
+/* Voice recording */
+.mic-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.mic-btn:hover:not(:disabled) {
+  color: var(--accent-cyan);
+  background: var(--accent-cyan-subtle);
+}
+
+.mic-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mic-btn.transcribing {
+  color: var(--accent-cyan);
+}
+
+.mic-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.recording-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  padding: 0 var(--space-sm);
+}
+
+.recording-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: pulse-recording 1s ease-in-out infinite;
+}
+
+@keyframes pulse-recording {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+.recording-time {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: #ef4444;
+  font-weight: 600;
+  min-width: 36px;
+}
+
+.recording-cancel,
+.recording-stop {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.recording-cancel {
+  color: var(--text-muted);
+}
+
+.recording-cancel:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.recording-cancel svg {
+  width: 16px;
+  height: 16px;
+}
+
+.recording-stop {
+  color: #ef4444;
+}
+
+.recording-stop:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.recording-stop svg {
+  width: 18px;
+  height: 18px;
+}
+
+.recording-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-md);
+  color: #ef4444;
+  font-size: 0.9rem;
+  font-style: italic;
+  min-height: 48px;
+}
+
 /* Message images */
 .message-image {
   max-width: 100%;

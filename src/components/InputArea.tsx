@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, ChangeEvent, ClipboardEvent, DragEvent } from 'react'
 import { useStore } from '../store'
 
+const SPEACHES_URL = 'http://192.168.0.254:8000/v1/audio/transcriptions'
+const STT_MODEL = 'deepdml/faster-whisper-large-v3-turbo-ct2'
+
 interface Attachment {
   id: string
   file: File
@@ -12,11 +15,112 @@ export function InputArea() {
   const [message, setMessage] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const [isTranscribing, setIsTranscribing] = useState(false)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { sendMessage, isStreaming, connected } = useStore()
 
   const maxLength = 4000
+
+  // Cleanup recording timer on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
+    }
+  }, [])
+
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
+      mediaRecorderRef.current = mediaRecorder
+      audioChunksRef.current = []
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data)
+      }
+
+      mediaRecorder.onstop = async () => {
+        // Stop all tracks
+        stream.getTracks().forEach(t => t.stop())
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current)
+          recordingTimerRef.current = null
+        }
+        setRecordingDuration(0)
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        if (audioBlob.size < 100) return // too small, probably empty
+
+        // Transcribe via Speaches
+        setIsTranscribing(true)
+        try {
+          const formData = new FormData()
+          formData.append('file', audioBlob, 'recording.webm')
+          formData.append('model', STT_MODEL)
+          formData.append('language', 'en')
+
+          const res = await fetch(SPEACHES_URL, { method: 'POST', body: formData })
+          if (!res.ok) throw new Error(`STT error: ${res.status}`)
+          const data = await res.json()
+          const text = (data.text || '').trim()
+          if (text) {
+            setMessage(prev => prev ? prev + ' ' + text : text)
+            // Focus the textarea so user can edit/send
+            setTimeout(() => textareaRef.current?.focus(), 50)
+          }
+        } catch (err) {
+          console.error('Transcription failed:', err)
+          // Could show error toast here
+        } finally {
+          setIsTranscribing(false)
+        }
+      }
+
+      mediaRecorder.start(250) // collect chunks every 250ms
+      setIsRecording(true)
+      setRecordingDuration(0)
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(d => d + 1)
+      }, 1000)
+    } catch (err) {
+      console.error('Mic access denied:', err)
+    }
+  }, [])
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop()
+    }
+    setIsRecording(false)
+  }, [])
+
+  const cancelRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      // Remove the onstop handler so it doesn't transcribe
+      mediaRecorderRef.current.onstop = () => {
+        mediaRecorderRef.current?.stream.getTracks().forEach(t => t.stop())
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current)
+          recordingTimerRef.current = null
+        }
+        setRecordingDuration(0)
+      }
+      mediaRecorderRef.current.stop()
+    }
+    setIsRecording(false)
+  }, [])
+
+  const formatDuration = (seconds: number) => {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${m}:${s.toString().padStart(2, '0')}`
+  }
 
   useEffect(() => {
     // Auto-resize textarea
@@ -208,7 +312,7 @@ export function InputArea() {
         <button
           className="attachment-btn"
           onClick={() => fileInputRef.current?.click()}
-          disabled={!connected}
+          disabled={!connected || isRecording}
           aria-label="Attach image"
           title="Attach image"
         >
@@ -216,21 +320,79 @@ export function InputArea() {
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
           </svg>
         </button>
-        <textarea
-          ref={textareaRef}
-          value={message}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder={connected ? "Type a message..." : "Connecting..."}
-          rows={1}
-          disabled={!connected}
-          aria-label="Message input"
-        />
+
+        {!isRecording ? (
+          <button
+            className={`mic-btn ${isTranscribing ? 'transcribing' : ''}`}
+            onClick={startRecording}
+            disabled={!connected || isTranscribing}
+            aria-label="Record voice note"
+            title={isTranscribing ? 'Transcribing...' : 'Record voice note'}
+          >
+            {isTranscribing ? (
+              <svg className="loading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="32">
+                  <animate attributeName="stroke-dashoffset" dur="1s" values="32;0" repeatCount="indefinite" />
+                </circle>
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
+                <path d="M19 10v2a7 7 0 01-14 0v-2" />
+                <line x1="12" y1="19" x2="12" y2="23" />
+                <line x1="8" y1="23" x2="16" y2="23" />
+              </svg>
+            )}
+          </button>
+        ) : (
+          <div className="recording-controls">
+            <span className="recording-indicator" />
+            <span className="recording-time">{formatDuration(recordingDuration)}</span>
+            <button
+              className="recording-cancel"
+              onClick={cancelRecording}
+              aria-label="Cancel recording"
+              title="Cancel"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+            <button
+              className="recording-stop"
+              onClick={stopRecording}
+              aria-label="Stop and transcribe"
+              title="Stop & transcribe"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {!isRecording ? (
+          <textarea
+            ref={textareaRef}
+            value={message}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder={connected ? (isTranscribing ? "Transcribing..." : "Type a message...") : "Connecting..."}
+            rows={1}
+            disabled={!connected}
+            aria-label="Message input"
+          />
+        ) : (
+          <div className="recording-placeholder">
+            Recording voice note...
+          </div>
+        )}
+
         <button
           className="send-btn"
           onClick={handleSubmit}
-          disabled={(!message.trim() && attachments.length === 0) || !connected}
+          disabled={(!message.trim() && attachments.length === 0) || !connected || isRecording}
           aria-label="Send message"
         >
           {isStreaming ? (
