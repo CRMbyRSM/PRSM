@@ -517,6 +517,21 @@ export const useStore = create<AppState>()(
             set({ connected: true, connecting: false })
           })
 
+          // Listen for session title updates (gateway auto-generates titles after first message)
+          client.on('session', (payload: unknown) => {
+            const data = payload as any
+            if (!data) return
+            const key = data.key || data.id || data.sessionKey
+            const title = data.title || data.label
+            if (key && title && typeof title === 'string') {
+              set((state) => ({
+                sessions: state.sessions.map((s) =>
+                  s.id === key || s.key === key ? { ...s, title } : s
+                )
+              }))
+            }
+          })
+
           client.on('disconnected', () => {
             set({ connected: false, isStreaming: false, hadStreamChunks: false })
           })
@@ -598,6 +613,11 @@ export const useStore = create<AppState>()(
             }
 
             set({ isStreaming: false, streamingSessionId: null, hadStreamChunks: false })
+
+            // Refresh sessions after stream ends — gateway may have auto-generated a title
+            setTimeout(() => {
+              get().fetchSessions().catch(() => {})
+            }, 1500)
           })
 
           await client.connect()
