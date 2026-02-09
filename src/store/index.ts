@@ -360,14 +360,23 @@ export const useStore = create<AppState>()(
       },
       updateSessionLabel: async (sessionId, label) => {
         const { client } = get()
-        if (!client) return
+        if (!client) {
+          console.error('[ClawControlRSM] updateSessionLabel: no client')
+          return
+        }
 
-        await client.updateSession(sessionId, { label })
-        set((state) => ({
-          sessions: state.sessions.map((s) =>
-            s.id === sessionId ? { ...s, title: label } : s
-          )
-        }))
+        try {
+          console.log('[ClawControlRSM] Renaming session', sessionId, 'to', label)
+          await client.updateSession(sessionId, { label })
+          set((state) => ({
+            sessions: state.sessions.map((s) =>
+              s.id === sessionId ? { ...s, title: label } : s
+            )
+          }))
+          console.log('[ClawControlRSM] Session renamed successfully')
+        } catch (err) {
+          console.error('[ClawControlRSM] updateSessionLabel failed:', err)
+        }
       },
       spawnSubagentSession: async (agentId, prompt) => {
         const { client } = get()

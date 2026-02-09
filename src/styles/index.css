@@ -788,6 +788,13 @@ a {
   font-weight: 500;
   font-size: 1rem;
   -webkit-app-region: no-drag;
+  cursor: pointer;
+  position: relative;
+  z-index: 10;
+}
+
+.session-name span {
+  -webkit-app-region: no-drag;
 }
 
 .edit-btn {
@@ -800,6 +807,7 @@ a {
   color: var(--text-muted);
   opacity: 0;
   transition: all var(--transition-fast);
+  -webkit-app-region: no-drag;
 }
 
 .session-name:hover .edit-btn {
