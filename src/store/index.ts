@@ -436,6 +436,7 @@ export const useStore = create<AppState>()(
         const { [sessionId]: _, ...restCounts } = unreadCounts
         // Set primary session filter so only this session's stream events render
         get().client?.setPrimarySessionKey(sessionId)
+        get().stopSubagentPolling()
         set({
           currentSessionId: sessionId,
           messages: [],
@@ -1041,6 +1042,11 @@ export const useStore = create<AppState>()(
           activeToolCalls: [],
           streamingSessionId: requestedSessionId
         })
+
+        // Start subagent polling — the client's session filter will emit
+        // 'subagentDetected' for events from other sessions, and polling
+        // catches subagents that don't emit events at all.
+        get().startSubagentPolling()
 
         // Add user message immediately (with attachment thumbnails if present)
         const userMessage: Message = {
