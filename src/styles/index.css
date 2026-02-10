@@ -10,7 +10,7 @@
   /* Sizing */
   --sidebar-width: 280px;
   --sidebar-collapsed: 72px;
-  --right-panel-width: 380px;
+  --right-panel-width: clamp(280px, 25vw, 400px);
   --top-bar-height: 56px;
   --input-area-height: 120px;
 
