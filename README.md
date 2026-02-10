@@ -1,283 +1,167 @@
-# ClawControl
+# ClawControlRSM
 
-A desktop client for OpenClaw AI assistant. Built with Electron, React, and TypeScript.
+A desktop client for [OpenClaw](https://github.com/openclaw/openclaw) — the open-source AI assistant platform. Built with Electron, React, and TypeScript.
+
+Connect to your OpenClaw gateway, chat with your agents, manage skills and cron jobs, and record voice notes — all from a native desktop app.
+
+<p align="center">
+  <img src="screenshots/home.png" width="700" alt="Main Chat Interface">
+  <br><em>Chat interface with session sidebar and skills panel</em>
+</p>
 
 ## Features
 
-- **Chat Interface**: Clean, modern chat UI with message bubbles and streaming support
-- **Agent Selection**: Switch between different AI agents
-- **Thinking Mode**: Toggle extended thinking for complex tasks
-- **Sessions Management**: Create, view, and manage chat sessions
-- **Skills Viewer**: Browse available agent skills and their triggers
-- **Cron Jobs**: View and manage scheduled tasks
-- **Dark/Light Theme**: Full theme support with system preference detection
-- **Cross-Platform**: Windows and macOS support
+### Chat
+- **Real-time streaming** — responses stream in as the agent thinks
+- **Image attachments** — paste, drag-and-drop, or pick images (auto-compressed to stay under the 25MB WebSocket limit)
+- **Voice notes** — record audio, transcribe via any Whisper-compatible STT service, insert as text
+- **Pinned messages** — star important messages across sessions, persisted locally
+- **Markdown rendering** — code blocks, tables, links, lists
+- **Thinking mode** — toggle extended thinking for complex tasks
 
-## Screenshots
+### Agent Management
+- **Multi-session** — create, switch, rename, and delete chat sessions
+- **Agent profiles** — view and edit agent workspace files (SOUL.md, MEMORY.md, etc.)
+- **Agent switching** — switch between agents if you run multiple
 
-<p align="center">
-  <img src="screenshots/home.png" width="600" alt="Main Chat Interface">
-  <br><em>Main chat interface with sidebar and skills panel</em>
-</p>
+### Skills & Automation
+- **Skills browser** — view all installed skills with status badges (Ready / Missing / Disabled)
+- **Skill details** — see documentation, required binaries, enable/disable skills
+- **Cron jobs** — view scheduled tasks, run history, and job configuration
+
+### Desktop Experience
+- **Dark & light themes** — toggle or follow system preference
+- **Desktop notifications** — get notified when an agent responds (even when the app is in the background)
+- **Secure token storage** — credentials encrypted via Electron's `safeStorage` API
+- **Heartbeat filtering** — background heartbeat messages hidden from the chat UI
+- **Cross-platform** — Windows (Setup + Portable), Linux (AppImage), macOS (DMG)
+
+<details>
+<summary><strong>More screenshots</strong></summary>
 
 <p align="center">
   <img src="screenshots/agent.png" width="600" alt="Agent Profile">
-  <br><em>Agent profile view</em>
+  <br><em>Agent profile and workspace file editor</em>
 </p>
 
 <p align="center">
   <img src="screenshots/skills.png" width="600" alt="Skills Panel">
-  <br><em>Skills browser</em>
+  <br><em>Skill detail view with status and documentation</em>
 </p>
 
 <p align="center">
   <img src="screenshots/cronjob.png" width="600" alt="Cron Jobs">
-  <br><em>Cron job management</em>
+  <br><em>Cron job viewer with run history</em>
 </p>
 
 <p align="center">
   <img src="screenshots/connect.png" width="600" alt="Connection Settings">
-  <br><em>Connection settings</em>
+  <br><em>Connection and STT settings</em>
 </p>
 
-## Installation
+</details>
+
+## Quick Start
+
+### Download
+
+Grab the latest release for your platform from [Releases](https://github.com/CRMbyRSM/ClawControlRSM/releases):
+
+| Platform | Format |
+|----------|--------|
+| Windows  | Setup (NSIS installer) or Portable (.exe) |
+| Linux    | AppImage |
+| macOS    | DMG |
+
+### Connect
+
+1. Open the app — it'll show the connection settings on first launch
+2. Enter your **OpenClaw Gateway URL** (e.g., `ws://192.168.1.50:18789` or `wss://your-server.com`)
+3. Enter your **Gateway Token** or **Password** (depending on your gateway's `auth.mode`)
+4. Click **Save & Connect**
+
+### Voice Notes (Optional)
+
+Voice notes require a Whisper-compatible speech-to-text service. In Settings, configure:
+
+- **STT Endpoint URL** — the `/v1/audio/transcriptions` endpoint
+- **STT Model** — model name (e.g., `whisper-large-v3`)
+- **API Key** — only needed for OpenAI or protected endpoints
+
+Works with:
+- [OpenAI Whisper API](https://platform.openai.com/docs/guides/speech-to-text) (paid, easy setup)
+- [Speaches](https://github.com/speaches-ai/speaches) (self-hosted, GPU-accelerated)
+- [LocalAI](https://localai.io/) (self-hosted, CPU or GPU)
+- Any OpenAI-compatible STT endpoint
+
+If no STT service is configured, the mic button appears greyed out with a tooltip pointing you to Settings.
+
+## Build from Source
 
 ```bash
-# Clone the repository
-git clone git@github.com:jakeledwards/openclaw-widget.git
-cd openclaw-widget
+# Clone
+git clone https://github.com/CRMbyRSM/ClawControlRSM.git
+cd ClawControlRSM
 
 # Install dependencies
 npm install
 
-# Run in development mode
-npm run dev
-```
-
-## Configuration
-
-The app connects to your local OpenClaw instance. Default configuration:
-- **Server URL**: `wss://your-server.local` or `ws://localhost:8080`
-
-### Connecting to a Local Server
-
-1. Make sure your OpenClaw server is running on your local network.
-2. In the app, open **Settings** (gear icon).
-3. Set **Server URL** to your local WebSocket endpoint (for example: `ws://192.168.1.50:8080`).
-4. If your server requires auth, set **Authentication Mode** and enter your **Gateway Token/Password**.
-5. Click **Save & Connect**.
-
-### Connecting Through Tailscale
-
-You must be connected to Tailscale before the app can reach your OpenClaw server.
-
-1. Connect your computer to Tailscale.
-2. Get your server's Tailscale hostname or IP.
-3. In the app, open **Settings** (gear icon).
-4. Set **Server URL** to your Tailscale endpoint (for example: `wss://your-server.tailnet-123.ts.net`).
-5. If your server requires auth, set **Authentication Mode** and enter your **Gateway Token/Password**.
-6. Click **Save & Connect**.
-
-### Settings Management
-
-You can configure the connection details directly in the application by clicking the **Settings (Gear)** icon in the top bar.
-
-**Available Options:**
-1.  **Server URL**: The WebSocket URL of your OpenClaw instance.
-    - **Validation**: Must start with `ws://` (insecure) or `wss://` (secure).
-    - **Example**: `wss://your-server.local` or `ws://localhost:8080`
-2.  **Authentication Mode**: Toggle between Token and Password authentication.
-3.  **Gateway Token/Password**: The credential for your OpenClaw instance (if enabled).
-
-Settings are automatically persisted between sessions. If you change the URL or credentials, click **Save & Connect** to apply the changes and attempt a reconnection.
-
-### Authentication Modes
-
-ClawControl supports two authentication modes, matching your server's `gateway.auth.mode` setting:
-
-| Mode | Server Config | Auth Payload |
-|------|---------------|--------------|
-| **Token** | `gateway.auth.mode = "token"` | `{ token: "your-token" }` |
-| **Password** | `gateway.auth.mode = "password"` | `{ password: "your-password" }` |
-
-Select the mode that matches your OpenClaw server configuration.
-
-### Self-Signed Certificates
-
-When connecting to a server with a self-signed or untrusted SSL certificate, you may encounter a certificate error.
-
-**To resolve:**
-1. ClawControl will detect the certificate error and show a modal
-2. Click "Open URL to Accept Certificate" to open the HTTPS URL in your browser
-3. Accept the browser's certificate warning (e.g., "Proceed to site" or "Accept the risk")
-4. Close the browser tab and retry the connection in ClawControl
-
-
-You can change this in the app settings or by modifying `src/store/index.ts`.
-
-## Development
-
-```bash
-# Start development server with hot reload
+# Development (hot reload)
 npm run dev
 
-# Run type checking
-npm run typecheck
-
-# Run tests
-npm run test
-
-# Run tests once
-npm run test:run
+# Build for your platform
+npm run build:win      # Windows (Setup + Portable)
+npm run build:linux    # Linux (AppImage)
+npm run build:mac      # macOS (DMG)
+npm run build:all      # Windows + Linux
 ```
 
-## Building
+### Requirements
 
-### Windows (from Windows)
+- Node.js 18+
+- npm 9+
+- For Windows builds: Windows or WSL
+- For macOS builds: macOS with Xcode CLI tools
+
+## Architecture
+
+```
+src/
+├── components/        # React UI components
+│   ├── ChatArea.tsx       # Message display with markdown rendering
+│   ├── InputArea.tsx      # Message input, attachments, voice recording
+│   ├── Sidebar.tsx        # Session list, agent selector
+│   ├── RightPanel.tsx     # Skills, cron jobs, pinned messages tabs
+│   ├── SettingsModal.tsx  # Connection + STT configuration
+│   └── ...
+├── store/             # Zustand state management (persisted to localStorage)
+├── lib/
+│   ├── openclaw-client.ts  # WebSocket client for OpenClaw gateway
+│   ├── platform.ts         # Platform abstraction (Electron/Capacitor/web)
+│   └── safe-render.ts      # XSS sanitization for rendered content
+├── styles/            # CSS (no preprocessor, CSS custom properties for theming)
+└── electron/          # Electron main process + preload
+```
+
+The app communicates with OpenClaw via WebSocket using the gateway's native protocol. All messages, sessions, skills, and cron data flow through a single persistent connection.
+
+## Mobile (Experimental)
+
+A Capacitor scaffold exists for iOS/Android but is not yet production-ready:
 
 ```bash
-npm run build:win
+npm run mobile:dev      # Browser preview
+npm run mobile:sync     # Build + sync to native projects
+npm run mobile:ios      # Open in Xcode
+npm run mobile:android  # Open in Android Studio
 ```
 
-Output: `release/ClawControl Setup.exe` and `release/ClawControl Portable.exe`
+## Acknowledgments
 
-### macOS (from macOS)
+Forked from [ClawControl](https://github.com/jakeledwards/ClawControl) by Jacob L. Edwards / Oaken Cloud Technologies, LLC.
 
-```bash
-npm run build:mac
-```
-
-Output: `release/ClawControl.dmg`
-
-### Cross-Platform Note
-
-Building Windows packages from Linux/WSL requires Wine. For best results:
-- Build Windows packages on Windows
-- Build macOS packages on macOS
-
-## Project Structure
-
-```
-clawcontrol/
-├── electron/              # Electron main process
-│   ├── main.ts            # Main process entry
-│   └── preload.ts         # Preload script (IPC bridge)
-├── src/
-│   ├── components/        # React components
-│   │   ├── ChatArea.tsx
-│   │   ├── InputArea.tsx
-│   │   ├── RightPanel.tsx
-│   │   ├── Sidebar.tsx
-│   │   ├── TopBar.tsx
-│   │   ├── SettingsModal.tsx
-│   │   ├── CertErrorModal.tsx
-│   │   ├── SkillDetailView.tsx
-│   │   └── CronJobDetailView.tsx
-│   ├── lib/
-│   │   └── openclaw-client.ts  # WebSocket client
-│   ├── store/
-│   │   └── index.ts       # Zustand state management
-│   ├── styles/
-│   │   └── index.css      # Main stylesheet
-│   ├── App.tsx
-│   └── main.tsx
-├── build/                 # App icons and build assets
-└── scripts/               # Utility scripts
-```
-
-## OpenClaw API
-
-ClawControl communicates with OpenClaw using a custom frame-based protocol (v3) over WebSocket. The protocol uses three frame types:
-
-### Frame Types
-
-**Request Frame** - Client to server RPC calls:
-```javascript
-{
-  type: 'req',
-  id: '1',
-  method: 'chat.send',
-  params: { sessionKey: 'session-123', message: 'Hello!' }
-}
-```
-
-**Response Frame** - Server responses to requests:
-```javascript
-{
-  type: 'res',
-  id: '1',
-  ok: true,
-  payload: { /* result data */ }
-}
-```
-
-**Event Frame** - Server-pushed events (streaming, presence, etc.):
-```javascript
-{
-  type: 'event',
-  event: 'chat',
-  payload: { state: 'delta', message: { content: '...' } }
-}
-```
-
-### Connection Handshake
-
-On connect, the server sends a `connect.challenge` event. The client responds with:
-```javascript
-{
-  type: 'req',
-  id: '1',
-  method: 'connect',
-  params: {
-    minProtocol: 3,
-    maxProtocol: 3,
-    role: 'operator',
-    client: { id: 'gateway-client', displayName: 'ClawControl', version: '1.0.0' },
-    auth: { token: 'your-token' }  // or { password: 'your-password' }
-  }
-}
-```
-
-### Available Methods
-
-**Sessions**
-- `sessions.list` - List all sessions (supports `includeDerivedTitles`, `includeLastMessage`, `limit`)
-- `sessions.delete` - Delete a session by key
-- `sessions.patch` - Update session properties (e.g., label)
-
-**Chat**
-- `chat.send` - Send a message (`sessionKey`, `message`, `thinking`)
-- `chat.history` - Get messages for a session
-
-**Agents**
-- `agents.list` - List available agents
-
-**Skills**
-- `skills.status` - List skills with full metadata (enabled state, requirements, install options)
-- `skills.update` - Enable/disable a skill
-- `skills.install` - Install a skill
-
-**Cron Jobs**
-- `cron.list` - List scheduled jobs
-- `cron.get` - Get full cron job details
-- `cron.update` - Update job status (active/paused)
-
-### Streaming Events
-
-Chat responses stream via `event` frames:
-- `chat` event with `state: 'delta'` - Partial content chunks
-- `chat` event with `state: 'final'` - Complete message
-- `agent` event with `stream: 'assistant'` - Alternative streaming format
-
-## Tech Stack
-
-- **Electron** - Desktop app framework
-- **React 18** - UI framework
-- **TypeScript** - Type safety
-- **Vite** - Build tool
-- **Zustand** - State management
-- **Vitest** - Testing framework
+Built for the [OpenClaw](https://github.com/openclaw/openclaw) ecosystem. Join the community on [Discord](https://discord.com/invite/clawd).
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for details.
