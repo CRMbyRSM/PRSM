@@ -179,8 +179,8 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     icon: app.isPackaged
-      ? join(process.resourcesPath, 'icon.png')
-      : join(__dirname, '../build/icon.png'),
+      ? join(process.resourcesPath, process.platform === 'win32' ? 'icon.ico' : 'icon.png')
+      : join(__dirname, process.platform === 'win32' ? '../build/icon.ico' : '../build/icon.png'),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
