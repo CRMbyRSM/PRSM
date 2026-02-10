@@ -172,38 +172,22 @@ export function SettingsModal() {
           </div>
 
           <div className="form-group" style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', marginTop: '16px' }}>
-            <label style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '4px', display: 'block' }}>Updates</label>
-            <span className="form-hint" style={{ marginBottom: '12px', display: 'block' }}>
-              How PRSM checks for and installs updates.
-            </span>
-
-            <div className="update-policy-options" style={{ marginTop: '8px' }}>
-              {([
-                { value: 'instant', label: 'All updates, install immediately', hint: 'Download and install as soon as available' },
-                { value: 'daily', label: 'Check daily', hint: 'Check once a day, prompt before installing' },
-                { value: 'weekly', label: 'Check weekly', hint: 'Check once a week, prompt before installing' },
-                { value: 'bugfix', label: 'Bug fixes only', hint: 'Only patch versions (x.x.PATCH)' },
-                { value: 'feature', label: 'Feature releases only', hint: 'Minor and patch versions (x.MINOR.patch)' },
-                { value: 'off', label: 'Off', hint: 'Never check for updates' },
-              ] as const).map(opt => (
-                <label
-                  key={opt.value}
-                  className={`update-policy-option ${localUpdatePolicy === opt.value ? 'active' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="updatePolicy"
-                    value={opt.value}
-                    checked={localUpdatePolicy === opt.value}
-                    onChange={() => setLocalUpdatePolicy(opt.value)}
-                  />
-                  <div className="update-policy-label">
-                    <span className="update-policy-name">{opt.label}</span>
-                    <span className="update-policy-hint">{opt.hint}</span>
-                  </div>
-                </label>
-              ))}
-            </div>
+            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>Updates</span>
+              <select
+                value={localUpdatePolicy}
+                onChange={(e) => setLocalUpdatePolicy(e.target.value as typeof localUpdatePolicy)}
+                className="update-policy-select"
+              >
+                <option value="instant">Immediate</option>
+                <option value="daily">Check daily</option>
+                <option value="weekly">Check weekly</option>
+                <option value="bugfix">Bug fixes only</option>
+                <option value="feature">Features only</option>
+                <option value="off">Off</option>
+              </select>
+            </label>
+            <span className="form-hint">How PRSM checks for and installs updates</span>
           </div>
         </div>
 
