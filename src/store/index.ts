@@ -434,8 +434,8 @@ export const useStore = create<AppState>()(
         }
 
         const { [sessionId]: _, ...restCounts } = unreadCounts
-        // Clear primary session filter when switching sessions
-        get().client?.setPrimarySessionKey(null)
+        // Set primary session filter so only this session's stream events render
+        get().client?.setPrimarySessionKey(sessionId)
         set({
           currentSessionId: sessionId,
           messages: [],
@@ -954,6 +954,7 @@ export const useStore = create<AppState>()(
           if (!currentId && loadedSessions.length > 0) {
             const topSession = loadedSessions[0]
             set({ currentSessionId: topSession.id })
+            client.setPrimarySessionKey(topSession.id)
             client.getSessionMessages(topSession.id).then((messages) => {
               if (get().currentSessionId === topSession.id) {
                 set({ messages: deepSanitize(messages) })
