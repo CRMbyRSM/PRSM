@@ -4,6 +4,23 @@ import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile } fr
 import * as Platform from '../lib/platform'
 import { deepSanitize } from '../lib/safe-render'
 
+export interface ToolCall {
+  toolCallId: string
+  name: string
+  phase: 'start' | 'result'
+  result?: string
+  afterMessageId?: string
+  startedAt: number
+}
+
+export interface SubagentInfo {
+  sessionKey: string
+  label: string
+  status: 'running' | 'completed' | 'error'
+  afterMessageId?: string
+  startedAt: number
+}
+
 interface AgentDetail {
   agent: Agent
   workspace: string
@@ -132,6 +149,14 @@ interface AppState {
   isPinned: (sessionId: string, messageId: string) => boolean
   getPinsForSession: (sessionId: string) => PinnedMessage[]
 
+  // Tool Calls & Subagents
+  activeToolCalls: ToolCall[]
+  activeSubagents: SubagentInfo[]
+  abortChat: () => Promise<void>
+  openSubagentPopout: (sessionKey: string) => void
+  startSubagentPolling: () => void
+  stopSubagentPolling: () => void
+
   // Actions
   initializeApp: () => Promise<void>
   connect: () => Promise<void>
@@ -141,6 +166,28 @@ interface AppState {
   fetchAgents: () => Promise<void>
   fetchSkills: () => Promise<void>
   fetchCronJobs: () => Promise<void>
+}
+
+// Module-level polling state (not persisted)
+let _subagentPollTimer: ReturnType<typeof setInterval> | null = null
+let _baselineSessionKeys: Set<string> | null = null
+
+/**
+ * If the last message is a streaming placeholder (id starts with "streaming-"),
+ * finalize it with a stable ID so that subsequent tool calls / subagents can
+ * reference it via `afterMessageId`, and new stream chunks will create a fresh
+ * streaming message instead of appending to the finalized one.
+ */
+function finalizeStreamingMessage(messages: Message[]): { messages: Message[]; finalizedId: string | null } {
+  if (messages.length === 0) return { messages, finalizedId: null }
+  const last = messages[messages.length - 1]
+  if (last.role !== 'assistant' || !last.id.startsWith('streaming-')) {
+    return { messages, finalizedId: last.id }
+  }
+  const stableId = `msg-finalized-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  const updated = [...messages]
+  updated[updated.length - 1] = { ...last, id: stableId }
+  return { messages: updated, finalizedId: stableId }
 }
 
 function shouldNotify(
@@ -376,10 +423,14 @@ export const useStore = create<AppState>()(
         }
 
         const { [sessionId]: _, ...restCounts } = unreadCounts
+        // Clear primary session filter when switching sessions
+        get().client?.setPrimarySessionKey(null)
         set({
           currentSessionId: sessionId,
           messages: [],
           unreadCounts: restCounts,
+          activeToolCalls: [],
+          activeSubagents: [],
           // Always switch back to chat view when selecting a session
           mainView: 'chat',
           selectedSkill: null,
@@ -489,6 +540,90 @@ export const useStore = create<AppState>()(
         return get().pinnedMessages.filter((p) => p.sessionId === sessionId)
       },
 
+      // Tool Calls & Subagents
+      activeToolCalls: [],
+      activeSubagents: [],
+      abortChat: async () => {
+        const { client, streamingSessionId } = get()
+        if (!client || !streamingSessionId) return
+        try {
+          await client.abortChat(streamingSessionId)
+        } catch (err) {
+          console.error('[PRSM] abortChat failed:', err)
+        }
+        set({ isStreaming: false, streamingSessionId: null, hadStreamChunks: false, activeToolCalls: [] })
+        get().stopSubagentPolling()
+      },
+      openSubagentPopout: (sessionKey: string) => {
+        // Switch to the subagent session in the sidebar
+        get().setCurrentSession(sessionKey)
+      },
+      startSubagentPolling: () => {
+        const { client, sessions } = get()
+        if (!client || _subagentPollTimer) return
+
+        // Snapshot current session keys as baseline
+        _baselineSessionKeys = new Set(sessions.map(s => s.key || s.id))
+
+        _subagentPollTimer = setInterval(async () => {
+          const { client: c, currentSessionId } = get()
+          if (!c) return
+
+          try {
+            const allSessions = await c.listSessions()
+            const newSubagents: SubagentInfo[] = []
+
+            for (const s of allSessions) {
+              const key = s.key || s.id
+              if (_baselineSessionKeys?.has(key)) continue
+
+              const isSubagent = s.spawned === true || s.parentSessionId === currentSessionId
+              if (!isSubagent) continue
+
+              const { activeSubagents } = get()
+              if (activeSubagents.some(a => a.sessionKey === key)) continue
+
+              newSubagents.push({
+                sessionKey: key,
+                label: s.title || key,
+                status: 'running',
+                startedAt: Date.now()
+              })
+            }
+
+            if (newSubagents.length > 0) {
+              set((state) => {
+                const { messages: finalizedMsgs, finalizedId } = finalizeStreamingMessage(state.messages)
+                const tagged = newSubagents.map(sa => ({
+                  ...sa,
+                  afterMessageId: finalizedId || undefined
+                }))
+                return {
+                  messages: finalizedMsgs,
+                  activeSubagents: [...state.activeSubagents, ...tagged]
+                }
+              })
+            }
+          } catch {
+            // Polling failure — ignore
+          }
+        }, 2000)
+      },
+      stopSubagentPolling: () => {
+        if (_subagentPollTimer) {
+          clearInterval(_subagentPollTimer)
+          _subagentPollTimer = null
+        }
+        _baselineSessionKeys = null
+
+        // Mark all running subagents as completed
+        set((state) => ({
+          activeSubagents: state.activeSubagents.map(a =>
+            a.status === 'running' ? { ...a, status: 'completed' as const } : a
+          )
+        }))
+      },
+
       // Actions
       initializeApp: async () => {
         try {
@@ -547,7 +682,10 @@ export const useStore = create<AppState>()(
       },
 
       connect: async () => {
-        const { serverUrl, gatewayToken, client: existingClient } = get()
+        const { serverUrl, gatewayToken, client: existingClient, connecting } = get()
+
+        // Prevent concurrent connect() calls (React StrictMode fires effects twice)
+        if (connecting) return
 
         // Show settings if URL is not configured
         if (!serverUrl) {
@@ -559,6 +697,12 @@ export const useStore = create<AppState>()(
         if (existingClient) {
           existingClient.disconnect()
           set({ client: null })
+        }
+
+        // Kill any stale client surviving across Vite HMR reloads
+        const stale = (globalThis as any).__prsmClient as OpenClawClient | undefined
+        if (stale && stale !== existingClient) {
+          try { stale.disconnect() } catch { /* already closed */ }
         }
 
         set({ connecting: true })
@@ -626,7 +770,8 @@ export const useStore = create<AppState>()(
           })
 
           client.on('disconnected', () => {
-            set({ connected: false, isStreaming: false, hadStreamChunks: false })
+            set({ connected: false, isStreaming: false, hadStreamChunks: false, activeToolCalls: [] })
+            get().stopSubagentPolling()
           })
 
           client.on('certError', (payload: unknown) => {
@@ -634,22 +779,32 @@ export const useStore = create<AppState>()(
             get().showCertErrorModal(httpsUrl)
           })
 
-          client.on('streamStart', () => {
-            set({ isStreaming: true, hadStreamChunks: false })
+          client.on('streamStart', (payload: unknown) => {
+            const { sessionKey } = (payload || {}) as { sessionKey?: string }
+            const { currentSessionId } = get()
+            if (sessionKey && currentSessionId && sessionKey !== currentSessionId) return
+            set({ isStreaming: true, hadStreamChunks: false, activeToolCalls: [] })
+            get().startSubagentPolling()
           })
 
           client.on('streamChunk', (chunkArg: unknown) => {
             // Defensive: ensure chunk is always a string no matter what the gateway sends
             let text: string
+            let sessionKey: string | undefined
             if (typeof chunkArg === 'string') {
               text = chunkArg
             } else if (chunkArg && typeof chunkArg === 'object') {
               const payload = chunkArg as any
               text = String(payload.text || payload.delta || payload.content || '')
+              sessionKey = payload.sessionKey
             } else {
               text = String(chunkArg ?? '')
             }
             const kind = (chunkArg && typeof chunkArg === 'object') ? String((chunkArg as any).kind || '') : ''
+
+            // Session filtering
+            const { currentSessionId } = get()
+            if (sessionKey && currentSessionId && sessionKey !== currentSessionId) return
 
             // Skip empty chunks
             if (!text) return
@@ -658,9 +813,9 @@ export const useStore = create<AppState>()(
               const messages = [...state.messages]
               const lastMessage = messages[messages.length - 1]
 
-              // Append to the current assistant message within the same turn.
-              // A new bubble is only created after a user message or non-assistant message.
-              if (lastMessage && lastMessage.role === 'assistant') {
+              // Only append to an active streaming placeholder — finalized messages
+              // should not be extended (a new streaming message will be created instead).
+              if (lastMessage && lastMessage.role === 'assistant' && lastMessage.id.startsWith('streaming-')) {
                 const nextContent = kind === 'replace'
                   ? text
                   : (lastMessage.content + text)
@@ -681,8 +836,12 @@ export const useStore = create<AppState>()(
             })
           })
 
-          client.on('streamEnd', () => {
-            const { streamingSessionId, currentSessionId, messages, hadStreamChunks } = get()
+          client.on('streamEnd', (payload: unknown) => {
+            const { sessionKey } = (payload || {}) as { sessionKey?: string }
+            const { currentSessionId } = get()
+            if (sessionKey && currentSessionId && sessionKey !== currentSessionId) return
+
+            const { streamingSessionId, messages, hadStreamChunks } = get()
 
             // If streamEnd fires while we still have a streamingSessionId, the response completed
             if (streamingSessionId && hadStreamChunks) {
@@ -705,7 +864,8 @@ export const useStore = create<AppState>()(
               }
             }
 
-            set({ isStreaming: false, streamingSessionId: null, hadStreamChunks: false })
+            set({ isStreaming: false, streamingSessionId: null, hadStreamChunks: false, activeToolCalls: [] })
+            get().stopSubagentPolling()
 
             // Refresh sessions after stream ends — gateway may have auto-generated a title
             setTimeout(() => {
@@ -713,7 +873,61 @@ export const useStore = create<AppState>()(
             }, 1500)
           })
 
+          client.on('toolCall', (payload: unknown) => {
+            const tc = payload as { toolCallId: string; name: string; phase: string; result?: string; sessionKey?: string }
+            const { currentSessionId: csid } = get()
+            if (tc.sessionKey && csid && tc.sessionKey !== csid) return
+
+            set((state) => {
+              const idx = state.activeToolCalls.findIndex(t => t.toolCallId === tc.toolCallId)
+              if (idx >= 0) {
+                const updated = [...state.activeToolCalls]
+                updated[idx] = { ...updated[idx], phase: tc.phase as 'start' | 'result', result: tc.result }
+                return { activeToolCalls: updated }
+              }
+
+              // New tool call: finalize the current streaming message so subsequent
+              // stream chunks create a new bubble, and link this tool call to it.
+              const { messages: finalizedMsgs, finalizedId } = finalizeStreamingMessage(state.messages)
+              return {
+                messages: finalizedMsgs,
+                activeToolCalls: [...state.activeToolCalls, {
+                  toolCallId: tc.toolCallId,
+                  name: tc.name,
+                  phase: tc.phase as 'start' | 'result',
+                  result: tc.result,
+                  afterMessageId: finalizedId || undefined,
+                  startedAt: Date.now()
+                }]
+              }
+            })
+          })
+
+          // Event-driven subagent detection: when the client's session filter
+          // blocks an event from a different session, it emits this.
+          client.on('subagentDetected', (payload: unknown) => {
+            const { sessionKey } = payload as { sessionKey: string }
+            if (!sessionKey) return
+
+            set((state) => {
+              if (state.activeSubagents.some(a => a.sessionKey === sessionKey)) return state
+
+              const { messages: finalizedMsgs, finalizedId } = finalizeStreamingMessage(state.messages)
+              return {
+                messages: finalizedMsgs,
+                activeSubagents: [...state.activeSubagents, {
+                  sessionKey,
+                  label: sessionKey,
+                  status: 'running' as const,
+                  startedAt: Date.now(),
+                  afterMessageId: finalizedId || undefined
+                }]
+              }
+            })
+          })
+
           await client.connect()
+          ;(globalThis as any).__prsmClient = client
           set({ client })
 
           // Fetch initial data
@@ -743,6 +957,9 @@ export const useStore = create<AppState>()(
       disconnect: () => {
         const { client } = get()
         client?.disconnect()
+        if ((globalThis as any).__prsmClient === client) {
+          (globalThis as any).__prsmClient = null
+        }
         set({ client: null, connected: false })
       },
 
@@ -778,10 +995,15 @@ export const useStore = create<AppState>()(
           })
         }
 
+        // Pre-seed the primary session filter so subagent events are dropped
+        client.setPrimarySessionKey(requestedSessionId)
+
         // Reset streaming state so user can always send follow-up messages
+        // Keep activeSubagents so previous subagent blocks stay visible in chat
         set({
           isStreaming: false,
           hadStreamChunks: false,
+          activeToolCalls: [],
           streamingSessionId: requestedSessionId
         })
 
@@ -868,8 +1090,25 @@ export const useStore = create<AppState>()(
       fetchSessions: async () => {
         const { client } = get()
         if (!client) return
-        const sessions = deepSanitize(await client.listSessions())
-        set({ sessions })
+        const serverSessions = deepSanitize(await client.listSessions())
+
+        set((state) => {
+          // Deduplicate server sessions by key to prevent duplicate React keys
+          const seen = new Set<string>()
+          const uniqueServerSessions = serverSessions.filter((s: Session) => {
+            const key = s.key || s.id
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+          })
+
+          // Preserve local-only sessions (created but no message sent yet)
+          const localOnly = state.sessions.filter(s => {
+            const key = s.key || s.id
+            return !seen.has(key) && key.startsWith('session-')
+          })
+          return { sessions: [...uniqueServerSessions, ...localOnly] }
+        })
       },
 
       fetchAgents: async () => {
@@ -915,3 +1154,14 @@ export const useStore = create<AppState>()(
     }
   )
 )
+
+// Vite HMR: disconnect stale WebSocket connections when modules are hot-replaced.
+// Without this, old module versions keep processing events, causing duplicate streams.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    const { client } = useStore.getState()
+    if (client) {
+      client.disconnect()
+    }
+  })
+}

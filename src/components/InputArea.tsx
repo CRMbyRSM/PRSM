@@ -29,7 +29,7 @@ export function InputArea() {
   const hadSoundRef = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { sendMessage, isStreaming, connected, sttUrl, sttModel, sttApiKey } = useStore()
+  const { sendMessage, isStreaming, connected, sttUrl, sttModel, sttApiKey, abortChat } = useStore()
 
   const maxLength = 4000
   const MAX_RECORDING_SECONDS = 120 // 2 minutes
@@ -475,24 +475,28 @@ export function InputArea() {
           </div>
         )}
 
-        <button
-          className="send-btn"
-          onClick={handleSubmit}
-          disabled={(!message.trim() && attachments.length === 0) || !connected || isRecording}
-          aria-label="Send message"
-        >
-          {isStreaming ? (
-            <svg className="loading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="32">
-                <animate attributeName="stroke-dashoffset" dur="1s" values="32;0" repeatCount="indefinite" />
-              </circle>
+        {isStreaming ? (
+          <button
+            className="send-btn stop-btn"
+            onClick={abortChat}
+            aria-label="Stop generation"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
             </svg>
-          ) : (
+          </button>
+        ) : (
+          <button
+            className="send-btn"
+            onClick={handleSubmit}
+            disabled={(!message.trim() && attachments.length === 0) || !connected || isRecording}
+            aria-label="Send message"
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
             </svg>
-          )}
-        </button>
+          </button>
+        )}
       </div>
       <div className="input-footer">
         <span className="char-count">

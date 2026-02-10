@@ -1,5 +1,9 @@
 // OpenClaw Client - Custom Frame-based Protocol (v3)
 
+export function stripAnsi(str: string): string {
+  return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+}
+
 export interface MessageAttachment {
   type: string
   mimeType: string
@@ -140,11 +144,18 @@ export class OpenClawClient {
   private activeStreamSource: 'chat' | 'agent' | null = null
   private suppressChatFinal = false
   private assistantStreamText = ''
+  private primarySessionKey: string | null = null
 
   constructor(url: string, token: string = '', authMode: 'token' | 'password' = 'token') {
     this.url = url
     this.token = token
     this.authMode = authMode
+  }
+
+  // Session filtering — when set, events from other sessions are dropped
+  // and a 'subagentDetected' event is emitted instead
+  setPrimarySessionKey(key: string | null): void {
+    this.primarySessionKey = key
   }
 
   // Event handling
@@ -401,6 +412,15 @@ export class OpenClawClient {
     return append
   }
 
+  /** Check if an event's sessionKey matches the primary filter. If not, emit subagentDetected. */
+  private checkSessionFilter(sessionKey?: string): boolean {
+    if (!this.primarySessionKey || !sessionKey) return true
+    if (sessionKey === this.primarySessionKey) return true
+    // Different session — this is likely a subagent
+    this.emit('subagentDetected', { sessionKey })
+    return false
+  }
+
   private handleNotification(event: string, payload: any): void {
     switch (event) {
       case 'chat':
@@ -450,6 +470,9 @@ export class OpenClawClient {
         this.emit('agentStatus', payload)
         break
       case 'agent':
+        // Session filtering — drop events from non-primary sessions
+        if (!this.checkSessionFilter(payload.sessionKey)) return
+
         if (payload.stream === 'assistant') {
           if (this.activeStreamSource !== 'agent') {
             this.assistantStreamText = ''
@@ -479,6 +502,15 @@ export class OpenClawClient {
               this.emit('streamEnd')
             }
           }
+        } else if (payload.stream === 'tool') {
+          const data = payload.data || {}
+          this.emit('toolCall', {
+            toolCallId: data.toolCallId || data.id || `tc-${Date.now()}`,
+            name: data.name || data.toolName || 'unknown',
+            phase: data.phase || (data.result ? 'result' : 'start'),
+            result: data.result ? (typeof data.result === 'string' ? data.result : JSON.stringify(data.result)) : undefined,
+            afterMessageId: data.afterMessageId
+          })
         }
         break
       default:
@@ -629,11 +661,14 @@ export class OpenClawClient {
           // Filter out items without content (e.g. status updates) or heartbeats
           if ((!content && !thinking) || isHeartbeat) return null
 
+          const finalContent = typeof content === 'string' ? stripAnsi(content) : String(content || '')
+          const finalThinking = thinking ? stripAnsi(typeof thinking === 'string' ? thinking : JSON.stringify(thinking)) : undefined
+
           return {
             id: String(msg.id || m.id || m.runId || `history-${Math.random()}`),
             role: msg.role || m.role || 'assistant',
-            content: typeof content === 'string' ? content : String(content || ''),
-            thinking: thinking ? (typeof thinking === 'string' ? thinking : JSON.stringify(thinking)) : undefined,
+            content: finalContent,
+            thinking: finalThinking,
             timestamp: new Date(msg.timestamp || m.timestamp || msg.ts || m.ts || msg.createdAt || m.createdAt || Date.now()).toISOString()
           }
         }) as (Message | null)[]
@@ -678,6 +713,10 @@ export class OpenClawClient {
     return {
       sessionKey: result?.sessionKey || result?.session?.key || result?.key
     }
+  }
+
+  async abortChat(sessionId: string): Promise<void> {
+    await this.call('chat.abort', { sessionKey: sessionId })
   }
 
   // Resolve avatar URL - handles relative paths like /avatar/main

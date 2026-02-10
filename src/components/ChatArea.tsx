@@ -1,6 +1,7 @@
-import { useRef, useEffect, Fragment, memo, useMemo, useCallback, Component, ErrorInfo, ReactNode } from 'react'
-import { useStore } from '../store'
-import { Message } from '../lib/openclaw-client'
+import { useRef, useEffect, Fragment, memo, useMemo, useCallback, Component, ErrorInfo, ReactNode, useState } from 'react'
+import { useStore, ToolCall } from '../store'
+import { Message, stripAnsi } from '../lib/openclaw-client'
+import { SubagentBlock } from './SubagentBlock'
 import { format, isSameDay } from 'date-fns'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -82,16 +83,86 @@ const channelLabels: Record<string, { label: string; icon: string }> = {
 const remarkPlugins = [remarkGfm]
 const rehypePlugins = [rehypeSanitize]
 
+/** Collapsible thinking block — collapsed by default to reduce clutter */
+function ThinkingBlock({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const safeContent = safe(content)
+  // Truncate preview to first ~80 chars
+  const preview = safeContent.length > 80 ? safeContent.slice(0, 80) + '…' : safeContent
+
+  return (
+    <div className={`thinking-block ${expanded ? 'expanded' : 'collapsed'}`}>
+      <button className="thinking-header" onClick={() => setExpanded(!expanded)}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 16v-4M12 8h.01" />
+        </svg>
+        <span className="thinking-label-text">Thinking</span>
+        {!expanded && <span className="thinking-preview">{preview}</span>}
+        <svg className={`thinking-chevron ${expanded ? 'expanded' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      {expanded && (
+        <div className="thinking-content">
+          <MessageContent content={safeContent} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ToolCallBlock({ toolCall }: { toolCall: ToolCall }) {
+  const [expanded, setExpanded] = useState(false)
+  const isRunning = toolCall.phase === 'start'
+
+  return (
+    <div className={`tool-call-block ${isRunning ? 'running' : 'completed'}`}>
+      <button className="tool-call-header" onClick={() => setExpanded(!expanded)}>
+        {isRunning ? (
+          <svg className="tool-call-icon spinning" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 6v6l4 2" />
+          </svg>
+        ) : (
+          <svg className="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+        )}
+        <span className="tool-call-name">{toolCall.name}</span>
+        <span className="tool-call-status">{isRunning ? 'Running...' : 'Done'}</span>
+        <svg className={`tool-call-chevron ${expanded ? 'expanded' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      {expanded && toolCall.result && (
+        <div className="tool-call-result">
+          <pre>{stripAnsi(toolCall.result)}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ChatArea() {
   const messages = useStore((s) => s.messages)
   const isStreaming = useStore((s) => s.isStreaming)
+  const hadStreamChunks = useStore((s) => s.hadStreamChunks)
   const agents = useStore((s) => s.agents)
   const currentAgentId = useStore((s) => s.currentAgentId)
   const currentSessionId = useStore((s) => s.currentSessionId)
+  const sessions = useStore((s) => s.sessions)
+  const activeToolCalls = useStore((s) => s.activeToolCalls)
+  const activeSubagents = useStore((s) => s.activeSubagents)
+  const openSubagentPopout = useStore((s) => s.openSubagentPopout)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const isAutoScrollRef = useRef(true)
   const chatAreaRef = useRef<HTMLDivElement>(null)
-  const currentAgent = agents.find((a) => a.id === currentAgentId)
+
+  // Resolve agent from current session's agentId
+  const currentSession = sessions.find(s => (s.key || s.id) === currentSessionId)
+  const sessionAgentId = currentSession?.agentId || currentAgentId
+  const currentAgent = agents.find((a) => a.id === sessionAgentId)
 
   // Only auto-scroll if user is near the bottom
   const handleScroll = useCallback(() => {
@@ -149,6 +220,29 @@ export function ChatArea() {
     }
   }, [messages])
 
+  // Build lookup maps for tool calls and subagents by afterMessageId
+  const toolCallsByMessageId = useMemo(() => {
+    const map = new Map<string, ToolCall[]>()
+    for (const tc of activeToolCalls) {
+      const key = tc.afterMessageId || '__trailing__'
+      const arr = map.get(key) || []
+      arr.push(tc)
+      map.set(key, arr)
+    }
+    return map
+  }, [activeToolCalls])
+
+  const subagentsByMessageId = useMemo(() => {
+    const map = new Map<string, typeof activeSubagents>()
+    for (const sa of activeSubagents) {
+      const key = sa.afterMessageId || '__trailing__'
+      const arr = map.get(key) || []
+      arr.push(sa)
+      map.set(key, arr)
+    }
+    return map
+  }, [activeSubagents])
+
   useEffect(() => {
     if (isAutoScrollRef.current) {
       chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
@@ -186,6 +280,8 @@ export function ChatArea() {
       <div className="chat-container">
         {messagesWithMeta.map(({ message, isNewDay, showChannelDivider, channel }, index) => {
           const isLastMessage = index === messagesWithMeta.length - 1
+          const msgToolCalls = toolCallsByMessageId.get(message.id)
+          const msgSubagents = subagentsByMessageId.get(message.id)
           return (
             <Fragment key={message.id}>
               {isNewDay && <DateSeparator date={new Date(message.timestamp)} />}
@@ -199,11 +295,41 @@ export function ChatArea() {
                   sessionId={currentSessionId}
                 />
               </MessageErrorBoundary>
+              {msgToolCalls && msgToolCalls.length > 0 && (
+                <div className="tool-calls-container">
+                  {msgToolCalls.map(tc => (
+                    <ToolCallBlock key={tc.toolCallId} toolCall={tc} />
+                  ))}
+                </div>
+              )}
+              {msgSubagents && msgSubagents.length > 0 && (
+                <div className="subagents-container">
+                  {msgSubagents.map(sa => (
+                    <SubagentBlock key={sa.sessionKey} subagent={sa} onOpen={openSubagentPopout} />
+                  ))}
+                </div>
+              )}
             </Fragment>
           )
         })}
 
-        {isStreaming && messages.length > 0 && messages[messages.length - 1].role === 'user' && (
+        {/* Trailing tool calls / subagents not attached to a specific message */}
+        {toolCallsByMessageId.get('__trailing__') && (
+          <div className="tool-calls-container">
+            {toolCallsByMessageId.get('__trailing__')!.map(tc => (
+              <ToolCallBlock key={tc.toolCallId} toolCall={tc} />
+            ))}
+          </div>
+        )}
+        {subagentsByMessageId.get('__trailing__') && (
+          <div className="subagents-container">
+            {subagentsByMessageId.get('__trailing__')!.map(sa => (
+              <SubagentBlock key={sa.sessionKey} subagent={sa} onOpen={openSubagentPopout} />
+            ))}
+          </div>
+        )}
+
+        {isStreaming && !hadStreamChunks && (
           <div className="message agent typing-indicator-container">
             <div className="message-avatar">
               <svg viewBox="0 0 24 24" fill="currentColor">
@@ -259,18 +385,47 @@ function ChannelDivider({ channel }: { channel: string }) {
 // IMPORTANT: react-markdown passes `node` (HAST AST object) and other non-DOM
 // props to every custom component. NEVER spread {...rest} or {...props} onto
 // DOM elements — only pass known, safe DOM attributes explicitly.
+function CodeCopyButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {})
+  }, [code])
+  return (
+    <button className={`code-copy-btn ${copied ? 'copied' : ''}`} onClick={handleCopy} aria-label="Copy code">
+      {copied ? (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M20 6L9 17l-5-5" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 const markdownComponents = {
   code(props: any) {
     const { children, className } = props
     const match = /language-(\w+)/.exec(className || '')
-    return match ? (
-      <pre>
-        <div className="code-language">{match[1]}</div>
-        <code className={className}>
-          {children}
-        </code>
-      </pre>
-    ) : (
+    if (match) {
+      const codeText = String(children).replace(/\n$/, '')
+      return (
+        <pre>
+          <div className="code-language">{match[1]}</div>
+          <CodeCopyButton code={codeText} />
+          <code className={className}>
+            {children}
+          </code>
+        </pre>
+      )
+    }
+    return (
       <code className={className}>
         {children}
       </code>
@@ -466,16 +621,7 @@ const MessageBubble = memo(function MessageBubble({
             </div>
           )}
           {message.thinking && (
-            <div className="thinking-block">
-              <div className="thinking-header">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 6v6l4 2" />
-                </svg>
-                <span>Thinking...</span>
-              </div>
-              <div className="thinking-content">{safe(message.thinking)}</div>
-            </div>
+            <ThinkingBlock content={message.thinking} />
           )}
           <MessageContent content={safe(message.content)} />
         </div>
