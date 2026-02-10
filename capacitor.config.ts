@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
 const config: CapacitorConfig = {
-  appId: 'com.clawcontrol.app',
-  appName: 'ClawControl',
+  appId: 'com.rsm.prsm',
+  appName: 'PRSM',
   webDir: 'dist',
   server: {
     // Allow connections to any WebSocket server
@@ -28,7 +28,7 @@ const config: CapacitorConfig = {
   },
   ios: {
     contentInset: 'automatic',
-    scheme: 'ClawControl',
+    scheme: 'PRSM',
     preferredContentMode: 'mobile'
   },
   android: {

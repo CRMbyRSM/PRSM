@@ -415,21 +415,21 @@ export const useStore = create<AppState>()(
       updateSessionLabel: async (sessionId, label) => {
         const { client } = get()
         if (!client) {
-          console.error('[ClawControlRSM] updateSessionLabel: no client')
+          console.error('[PRSM] updateSessionLabel: no client')
           return
         }
 
         try {
-          console.log('[ClawControlRSM] Renaming session', sessionId, 'to', label)
+          console.log('[PRSM] Renaming session', sessionId, 'to', label)
           await client.updateSession(sessionId, { label })
           set((state) => ({
             sessions: state.sessions.map((s) =>
               s.id === sessionId ? { ...s, title: label } : s
             )
           }))
-          console.log('[ClawControlRSM] Session renamed successfully')
+          console.log('[PRSM] Session renamed successfully')
         } catch (err) {
-          console.error('[ClawControlRSM] updateSessionLabel failed:', err)
+          console.error('[PRSM] updateSessionLabel failed:', err)
         }
       },
       spawnSubagentSession: async (agentId, prompt) => {
@@ -541,7 +541,7 @@ export const useStore = create<AppState>()(
             set({ showSettings: true })
           }
         } catch (err) {
-          console.error('[ClawControlRSM] initializeApp failed:', err)
+          console.error('[PRSM] initializeApp failed:', err)
           set({ showSettings: true })
         }
       },
@@ -859,7 +859,7 @@ export const useStore = create<AppState>()(
           // Sync canonical titles/metadata from the server.
           get().fetchSessions().catch(() => {})
         } catch (err) {
-          console.error('[ClawControlRSM] sendMessage failed:', err)
+          console.error('[PRSM] sendMessage failed:', err)
           // If send fails, stop streaming state so UI remains usable.
           set({ isStreaming: false, streamingSessionId: null })
         }

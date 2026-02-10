@@ -1,6 +1,6 @@
-# ClawControlRSM
+# PRSM
 
-A desktop client for [OpenClaw](https://github.com/openclaw/openclaw) — the open-source AI assistant platform. Built with Electron, React, and TypeScript.
+Desktop client for [OpenClaw](https://github.com/openclaw/openclaw) — the open-source AI assistant platform. Built with Electron, React, and TypeScript.
 
 Connect to your OpenClaw gateway, chat with your agents, manage skills and cron jobs, and record voice notes — all from a native desktop app.
 
@@ -65,7 +65,7 @@ Connect to your OpenClaw gateway, chat with your agents, manage skills and cron 
 
 ### Download
 
-Grab the latest release for your platform from [Releases](https://github.com/CRMbyRSM/ClawControlRSM/releases):
+Grab the latest release for your platform from [Releases](https://github.com/CRMbyRSM/PRSM/releases):
 
 | Platform | Format |
 |----------|--------|
@@ -82,26 +82,93 @@ Grab the latest release for your platform from [Releases](https://github.com/CRM
 
 ### Voice Notes (Optional)
 
-Voice notes require a Whisper-compatible speech-to-text service. In Settings, configure:
+Voice notes let you record audio and have it transcribed to text using any Whisper-compatible speech-to-text (STT) service. Click the mic button to configure — or click "Ask your assistant for help" and the bot will walk you through it.
 
-- **STT Endpoint URL** — the `/v1/audio/transcriptions` endpoint
-- **STT Model** — model name (e.g., `whisper-large-v3`)
-- **API Key** — only needed for OpenAI or protected endpoints
+**Three fields to fill in:**
 
-Works with:
-- [OpenAI Whisper API](https://platform.openai.com/docs/guides/speech-to-text) (paid, easy setup)
-- [Speaches](https://github.com/speaches-ai/speaches) (self-hosted, GPU-accelerated)
-- [LocalAI](https://localai.io/) (self-hosted, CPU or GPU)
-- Any OpenAI-compatible STT endpoint
+| Field | What it is |
+|-------|-----------|
+| **Endpoint URL** | The full URL to the `/v1/audio/transcriptions` endpoint |
+| **Model** | The transcription model name |
+| **API Key** | Only needed for OpenAI or protected endpoints |
 
-If no STT service is configured, the mic button appears greyed out with a tooltip pointing you to Settings.
+**Provider setup guides:**
+
+<details>
+<summary><strong>OpenAI Whisper API</strong> — Easiest, paid ($0.006/min)</summary>
+
+1. Get an API key at [platform.openai.com](https://platform.openai.com/api-keys)
+2. Configure:
+   - **URL:** `https://api.openai.com/v1/audio/transcriptions`
+   - **Model:** `whisper-1`
+   - **API Key:** your OpenAI API key
+
+No setup, no servers. Just works. Costs roughly $0.006 per minute of audio.
+</details>
+
+<details>
+<summary><strong>Speaches</strong> — Self-hosted, GPU-accelerated, free</summary>
+
+Run on any machine with a GPU (even a modest one):
+
+```bash
+docker run -d --gpus all -p 8000:8000 \
+  ghcr.io/speaches-ai/speaches:latest-cuda
+```
+
+Configure:
+- **URL:** `http://<your-server-ip>:8000/v1/audio/transcriptions`
+- **Model:** `Systran/faster-whisper-large-v3` (or any supported model)
+- **API Key:** leave empty
+
+CPU-only (slower but no GPU needed):
+```bash
+docker run -d -p 8000:8000 \
+  ghcr.io/speaches-ai/speaches:latest
+```
+
+See [Speaches docs](https://github.com/speaches-ai/speaches) for model options.
+</details>
+
+<details>
+<summary><strong>LocalAI</strong> — Self-hosted, CPU or GPU, free</summary>
+
+```bash
+docker run -d -p 8080:8080 localai/localai:latest
+```
+
+Configure:
+- **URL:** `http://<your-server-ip>:8080/v1/audio/transcriptions`
+- **Model:** `whisper-1`
+- **API Key:** leave empty
+
+See [LocalAI docs](https://localai.io/features/audio-to-text/) for setup details.
+</details>
+
+<details>
+<summary><strong>Groq</strong> — Cloud, very fast, free tier available</summary>
+
+1. Get an API key at [console.groq.com](https://console.groq.com/keys)
+2. Configure:
+   - **URL:** `https://api.groq.com/openai/v1/audio/transcriptions`
+   - **Model:** `whisper-large-v3-turbo`
+   - **API Key:** your Groq API key
+
+Free tier includes audio transcription. Very fast inference.
+</details>
+
+**Recording behavior:**
+- **Max duration:** 2 minutes (auto-stops with a countdown warning)
+- **Silence detection:** If you stop talking for 8+ seconds, recording auto-stops and transcribes
+- **Cancel:** Hit the ✕ to discard without transcribing
+- **Stop:** Hit the ■ to stop and transcribe immediately
 
 ## Build from Source
 
 ```bash
 # Clone
-git clone https://github.com/CRMbyRSM/ClawControlRSM.git
-cd ClawControlRSM
+git clone https://github.com/CRMbyRSM/PRSM.git
+cd PRSM
 
 # Install dependencies
 npm install

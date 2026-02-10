@@ -27,7 +27,7 @@ export function UpdateBanner() {
     })
 
     Platform.onUpdateError((err) => {
-      console.error('[ClawControlRSM] Update error:', err)
+      console.error('[PRSM] Update error:', err)
     })
   }, [setAvailableUpdate, setUpdateDownloaded])
 
@@ -40,7 +40,7 @@ export function UpdateBanner() {
     try {
       await Platform.downloadUpdate()
     } catch (err) {
-      console.error('[ClawControlRSM] Download update failed:', err)
+      console.error('[PRSM] Download update failed:', err)
     }
   }
 

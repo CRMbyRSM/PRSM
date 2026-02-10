@@ -25,7 +25,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     const lines: string[] = []
-    lines.push('=== ClawControlRSM Crash Report ===')
+    lines.push('=== PRSM Crash Report ===')
     lines.push(`Time: ${new Date().toISOString()}`)
     lines.push(`Error: ${error.message}`)
     lines.push(`Stack: ${error.stack?.slice(0, 500) || 'none'}`)

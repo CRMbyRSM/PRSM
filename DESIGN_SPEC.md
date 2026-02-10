@@ -1,4 +1,4 @@
-# ClawControl Design Specification
+# PRSM Design Specification
 
 ## Aesthetic Direction: Neo-Terminal Elegance
 
@@ -136,7 +136,7 @@ ON:  [━━━━━━━●] Thinking  (cyan glow animation)
 - Width: 280px (collapsible to 64px on tablet)
 - Background: `--bg-elevated`
 - Sections:
-  - **Logo Area** (64px): ClawControl logo with subtle animation on hover
+  - **Logo Area** (64px): PRSM logo with subtle animation on hover
   - **New Chat Button**: Full-width, cyan accent, icon + text
   - **Sessions List**: Scrollable, grouped by date
   - **Agent Selector**: Dropdown at bottom with avatar preview
@@ -276,7 +276,7 @@ ON:  [━━━━━━━●] Thinking  (cyan glow animation)
 
 ### Empty Chat
 Centered illustration with:
-- ClawControl logo (large, subtle)
+- PRSM logo (large, subtle)
 - "Start a conversation" text
 - Quick action buttons: "New Chat", "Load Session"
 

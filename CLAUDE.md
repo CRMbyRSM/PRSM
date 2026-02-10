@@ -26,7 +26,7 @@ npm run lint         # ESLint
 
 ## Architecture
 
-ClawControl is a cross-platform client for OpenClaw AI assistant. It runs as an Electron desktop app and as a native mobile app (iOS/Android) via Capacitor.
+PRSM is a cross-platform client for OpenClaw AI assistant. It runs as an Electron desktop app and as a native mobile app (iOS/Android) via Capacitor.
 
 ### Desktop Process Structure (Electron)
 - **Main Process** (`electron/main.ts`): Electron main process, handles window creation and IPC

@@ -1,9 +1,9 @@
 {
-  "name": "clawcontrol",
-  "version": "1.8.0",
+  "name": "prsm",
+  "version": "1.9.0",
   "description": "Desktop and mobile client for OpenClaw AI assistant",
   "main": "dist-electron/main.js",
-  "author": "ClawControlRSM Team",
+  "author": "RSM Consulting",
   "license": "MIT",
   "scripts": {
     "dev": "npx vite",
@@ -76,13 +76,13 @@
     "ws": "^8.19.0"
   },
   "build": {
-    "appId": "com.clawcontrolrsm.app",
-    "productName": "ClawControlRSM",
+    "appId": "com.rsm.prsm",
+    "productName": "PRSM",
     "publish": [
       {
         "provider": "github",
         "owner": "CRMbyRSM",
-        "repo": "ClawControlRSM"
+        "repo": "PRSM"
       }
     ],
     "directories": {
@@ -117,11 +117,10 @@
       "category": "Utility"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": false,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "installerHeader": "build/installerHeader.bmp",
       "installerHeaderIcon": "build/icon.ico",
       "installerSidebar": "build/installerSidebar.bmp",
       "uninstallerSidebar": "build/uninstallerSidebar.bmp",
@@ -129,7 +128,9 @@
       "license": null,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "ClawControlRSM"
+      "shortcutName": "PRSM",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     }
   }
 }

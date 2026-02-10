@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent, ChangeEvent, ClipboardEvent, DragEvent } from 'react'
 import { useStore } from '../store'
+import { VoiceSettings } from './VoiceSettings'
 
 interface Attachment {
   id: string
@@ -16,20 +17,31 @@ export function InputArea() {
   const [recordingDuration, setRecordingDuration] = useState(0)
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [sttError, setSttError] = useState('')
-  const [sttTooltip, setSttTooltip] = useState(false)
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false)
+  const micBtnRef = useRef<HTMLButtonElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const silenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const silenceStartRef = useRef<number>(0)
+  const hadSoundRef = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { sendMessage, isStreaming, connected, sttUrl, sttModel, sttApiKey } = useStore()
 
   const maxLength = 4000
+  const MAX_RECORDING_SECONDS = 120 // 2 minutes
+  const SILENCE_THRESHOLD = 10 // RMS level — below this = silence
+  const SILENCE_TIMEOUT_MS = 8000 // 8 seconds of silence = auto-stop
 
   // Cleanup recording timer on unmount
   useEffect(() => {
     return () => {
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
+      if (silenceTimerRef.current) clearInterval(silenceTimerRef.current)
+      audioContextRef.current?.close().catch(() => {})
     }
   }, [])
 
@@ -88,8 +100,54 @@ export function InputArea() {
       mediaRecorder.start(250) // collect chunks every 250ms
       setIsRecording(true)
       setRecordingDuration(0)
+
+      // Set up audio analysis for silence detection
+      try {
+        const audioCtx = new AudioContext()
+        audioContextRef.current = audioCtx
+        const source = audioCtx.createMediaStreamSource(stream)
+        const analyser = audioCtx.createAnalyser()
+        analyser.fftSize = 512
+        source.connect(analyser)
+        analyserRef.current = analyser
+        silenceStartRef.current = Date.now()
+        hadSoundRef.current = false
+      } catch {
+        // Audio analysis not available — proceed without silence detection
+      }
+
+      // Duration timer + silence check + max duration
       recordingTimerRef.current = setInterval(() => {
-        setRecordingDuration(d => d + 1)
+        setRecordingDuration(d => {
+          const next = d + 1
+          // Auto-stop at max duration
+          if (next >= MAX_RECORDING_SECONDS) {
+            stopRecordingRef.current()
+          }
+          return next
+        })
+
+        // Silence detection
+        if (analyserRef.current) {
+          const data = new Uint8Array(analyserRef.current.fftSize)
+          analyserRef.current.getByteTimeDomainData(data)
+          // Calculate RMS
+          let sum = 0
+          for (let i = 0; i < data.length; i++) {
+            const val = (data[i] - 128) / 128
+            sum += val * val
+          }
+          const rms = Math.sqrt(sum / data.length) * 256
+
+          if (rms > SILENCE_THRESHOLD) {
+            // Sound detected — reset silence timer
+            silenceStartRef.current = Date.now()
+            hadSoundRef.current = true
+          } else if (hadSoundRef.current && (Date.now() - silenceStartRef.current) >= SILENCE_TIMEOUT_MS) {
+            // Had sound before, now silent for too long — auto-stop
+            stopRecordingRef.current()
+          }
+        }
       }, 1000)
     } catch (err) {
       console.error('Mic access denied:', err)
@@ -101,7 +159,15 @@ export function InputArea() {
       mediaRecorderRef.current.stop()
     }
     setIsRecording(false)
+    // Clean up audio analysis
+    audioContextRef.current?.close().catch(() => {})
+    audioContextRef.current = null
+    analyserRef.current = null
   }, [])
+
+  // Stable ref for use inside setInterval callbacks
+  const stopRecordingRef = useRef(stopRecording)
+  stopRecordingRef.current = stopRecording
 
   const cancelRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -117,6 +183,9 @@ export function InputArea() {
       mediaRecorderRef.current.stop()
     }
     setIsRecording(false)
+    audioContextRef.current?.close().catch(() => {})
+    audioContextRef.current = null
+    analyserRef.current = null
   }, [])
 
   const formatDuration = (seconds: number) => {
@@ -312,6 +381,7 @@ export function InputArea() {
           onChange={handleFileSelect}
           style={{ display: 'none' }}
         />
+        <div className="input-actions-left">
         <button
           className="attachment-btn"
           onClick={() => fileInputRef.current?.click()}
@@ -326,18 +396,18 @@ export function InputArea() {
 
         {!isRecording ? (
           <button
+            ref={micBtnRef}
             className={`mic-btn ${isTranscribing ? 'transcribing' : ''} ${!sttUrl ? 'disabled-hint' : ''}`}
             onClick={() => {
               if (!sttUrl) {
-                setSttTooltip(true)
-                setTimeout(() => setSttTooltip(false), 3000)
+                setShowVoiceSettings(v => !v)
                 return
               }
               startRecording()
             }}
             disabled={!!sttUrl && (!connected || isTranscribing)}
             aria-label="Record voice note"
-            title={!sttUrl ? 'Configure STT in Settings' : isTranscribing ? 'Transcribing...' : 'Record voice note'}
+            title={!sttUrl ? 'Set up voice notes' : isTranscribing ? 'Transcribing...' : 'Record voice note'}
           >
             {isTranscribing ? (
               <svg className="loading-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -380,6 +450,7 @@ export function InputArea() {
             </button>
           </div>
         )}
+        </div>
 
         {!isRecording ? (
           <textarea
@@ -395,7 +466,12 @@ export function InputArea() {
           />
         ) : (
           <div className="recording-placeholder">
-            Recording voice note...
+            <div className="recording-waveform">
+              <span /><span /><span /><span /><span /><span /><span />
+            </div>
+            {recordingDuration >= MAX_RECORDING_SECONDS - 10
+              ? `Wrapping up in ${MAX_RECORDING_SECONDS - recordingDuration}s...`
+              : 'Recording...'}
           </div>
         )}
 
@@ -429,11 +505,11 @@ export function InputArea() {
           Press <kbd>Enter</kbd> to send, <kbd>Shift+Enter</kbd> for new line
         </span>
       </div>
-      {sttTooltip && (
-        <div className="stt-setup-tooltip">
-          Voice notes require an STT service. Configure it in Settings.
-        </div>
-      )}
+      <VoiceSettings
+        open={showVoiceSettings}
+        onClose={() => setShowVoiceSettings(false)}
+        anchorRef={micBtnRef}
+      />
       {sttError && (
         <div className="stt-error-toast">{sttError}</div>
       )}

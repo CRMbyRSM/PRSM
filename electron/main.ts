@@ -209,7 +209,7 @@ function createWindow() {
   })
 
   // Set window title (version shown in sidebar instead)
-  mainWindow.setTitle('ClawControlRSM')
+  mainWindow.setTitle('PRSM')
 
   // Load the app
   if (process.env.VITE_DEV_SERVER_URL) {

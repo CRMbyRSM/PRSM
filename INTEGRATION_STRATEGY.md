@@ -69,7 +69,7 @@ Authentication uses a challenge/handshake flow immediately after the WebSocket c
     "role": "operator",
     "client": {
       "id": "gateway-client",
-      "displayName": "ClawControl",
+      "displayName": "PRSM",
       "version": "1.0.0",
       "platform": "web",
       "mode": "backend"

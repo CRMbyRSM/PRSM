@@ -247,7 +247,7 @@ export class OpenClawClient {
         role: 'operator',
         client: {
           id: 'gateway-client',
-          displayName: 'ClawControlRSM',
+          displayName: 'PRSM',
           version: __APP_VERSION__,
           platform: 'web',
           mode: 'backend'
@@ -580,7 +580,7 @@ export class OpenClawClient {
       } else if (result?.items) {
         messages = result.items
       } else {
-        console.warn('[ClawControlRSM] chat.history returned unexpected format for session', sessionId, result)
+        console.warn('[PRSM] chat.history returned unexpected format for session', sessionId, result)
         return []
       }
 
@@ -640,7 +640,7 @@ export class OpenClawClient {
 
         return rawMessages.filter((m): m is Message => m !== null)
     } catch (err) {
-      console.warn('[ClawControlRSM] Failed to load chat history for session', sessionId, err)
+      console.warn('[PRSM] Failed to load chat history for session', sessionId, err)
       return []
     }
   }
@@ -670,11 +670,11 @@ export class OpenClawClient {
 
     if (params.attachments && params.attachments.length > 0) {
       payload.attachments = params.attachments
-      console.log('[ClawControlRSM] Sending with', params.attachments.length, 'attachment(s), total base64 length:', params.attachments.reduce((s, a) => s + (a.content?.length || 0), 0))
+      console.log('[PRSM] Sending with', params.attachments.length, 'attachment(s), total base64 length:', params.attachments.reduce((s, a) => s + (a.content?.length || 0), 0))
     }
 
     const result = await this.call<any>('chat.send', payload)
-    console.log('[ClawControlRSM] chat.send result:', JSON.stringify(result)?.slice(0, 200))
+    console.log('[PRSM] chat.send result:', JSON.stringify(result)?.slice(0, 200))
     return {
       sessionKey: result?.sessionKey || result?.session?.key || result?.key
     }

@@ -26,7 +26,7 @@ class MessageErrorBoundary extends Component<
   componentDidCatch(error: Error, info: ErrorInfo) {
     // Log full details for remote debugging
     console.error(
-      `[ClawControlRSM] Message render crash — id=${this.props.messageId}`,
+      `[PRSM] Message render crash — id=${this.props.messageId}`,
       '\nError:', error.message,
       '\nContent type:', typeof this.props.messageContent,
       '\nContent preview:', String(this.props.messageContent).slice(0, 500),
@@ -75,7 +75,7 @@ const channelLabels: Record<string, { label: string; icon: string }> = {
   discord: { label: 'Discord', icon: '🎮' },
   whatsapp: { label: 'WhatsApp', icon: '📱' },
   system: { label: 'System', icon: '⚙️' },
-  direct: { label: 'ClawControlRSM', icon: '🖥️' },
+  direct: { label: 'PRSM', icon: '🖥️' },
 }
 
 // Shared markdown plugins — created once, not per render
@@ -136,7 +136,7 @@ export function ChatArea() {
           return { message, isNewDay, showChannelDivider, channel: currentChannel }
         })
     } catch (err) {
-      console.error('[ClawControlRSM] useMemo crash in messagesWithMeta:', err)
+      console.error('[PRSM] useMemo crash in messagesWithMeta:', err)
       // Return a safe fallback — render messages without metadata
       return messages
         .filter((m): m is Message => m != null && typeof m === 'object')
@@ -161,7 +161,7 @@ export function ChatArea() {
       <div className="chat-area">
         <div className="chat-empty">
           <div className="empty-logo">
-            <img src={logoUrl} alt="ClawControlRSM logo" />
+            <img src={logoUrl} alt="PRSM logo" />
           </div>
           <h2>Start a Conversation</h2>
           <p>Send a message to begin chatting with {safe(currentAgent?.name) || 'the AI assistant'}</p>
@@ -341,7 +341,7 @@ class SafeMarkdownBoundary extends Component<
   }
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error(
-      '[ClawControlRSM] ReactMarkdown render crash',
+      '[PRSM] ReactMarkdown render crash',
       '\nError:', error.message,
       '\nContent preview:', this.props.rawContent?.slice(0, 500),
       '\nStack:', info.componentStack

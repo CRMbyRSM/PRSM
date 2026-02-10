@@ -58,8 +58,8 @@ export function Sidebar() {
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${sidebarOpen ? 'visible' : ''}`}>
         <div className="sidebar-header">
           <div className="logo">
-            <img className="logo-icon" src={logoUrl} alt="ClawControlRSM logo" />
-            <span className="logo-text">ClawControlRSM</span>
+            <img className="logo-icon" src={logoUrl} alt="PRSM logo" />
+            <span className="logo-text"><span style={{color: 'var(--text-primary)'}}>P</span><span style={{color: 'var(--accent-cyan)'}}>RSM</span></span>
             <span className="logo-version">v{__APP_VERSION__}</span>
           </div>
           <button
