@@ -262,6 +262,50 @@ export async function showNotification(title: string, body: string): Promise<voi
   }
 }
 
+// --- Auto-update functions ---
+
+export async function checkForUpdate(): Promise<void> {
+  if (getPlatform() === 'electron' && (window as any).electronAPI?.updateCheck) {
+    await (window as any).electronAPI.updateCheck()
+  }
+}
+
+export async function downloadUpdate(): Promise<void> {
+  if (getPlatform() === 'electron' && (window as any).electronAPI?.updateDownload) {
+    await (window as any).electronAPI.updateDownload()
+  }
+}
+
+export async function installUpdate(): Promise<void> {
+  if (getPlatform() === 'electron' && (window as any).electronAPI?.updateInstall) {
+    await (window as any).electronAPI.updateInstall()
+  }
+}
+
+export function onUpdateAvailable(cb: (info: { version: string; releaseNotes: string }) => void): void {
+  if (getPlatform() === 'electron' && (window as any).electronAPI?.onUpdateAvailable) {
+    (window as any).electronAPI.onUpdateAvailable(cb)
+  }
+}
+
+export function onUpdateDownloaded(cb: () => void): void {
+  if (getPlatform() === 'electron' && (window as any).electronAPI?.onUpdateDownloaded) {
+    (window as any).electronAPI.onUpdateDownloaded(cb)
+  }
+}
+
+export function onUpdateError(cb: (err: string) => void): void {
+  if (getPlatform() === 'electron' && (window as any).electronAPI?.onUpdateError) {
+    (window as any).electronAPI.onUpdateError(cb)
+  }
+}
+
+export async function syncUpdatePolicy(policy: string, lastCheck: number): Promise<void> {
+  if (getPlatform() === 'electron' && (window as any).electronAPI?.updateSyncPolicy) {
+    await (window as any).electronAPI.updateSyncPolicy(policy, lastCheck)
+  }
+}
+
 // App visibility tracking
 let _appIsActive = true
 

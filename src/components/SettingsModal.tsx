@@ -22,7 +22,9 @@ export function SettingsModal() {
     sttModel,
     setSttModel,
     sttApiKey,
-    setSttApiKey
+    setSttApiKey,
+    updatePolicy,
+    setUpdatePolicy
   } = useStore()
 
   const [url, setUrl] = useState(serverUrl)
@@ -31,6 +33,7 @@ export function SettingsModal() {
   const [localSttUrl, setLocalSttUrl] = useState(sttUrl)
   const [localSttModel, setLocalSttModel] = useState(sttModel)
   const [localSttApiKey, setLocalSttApiKey] = useState(sttApiKey)
+  const [localUpdatePolicy, setLocalUpdatePolicy] = useState(updatePolicy)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -40,7 +43,8 @@ export function SettingsModal() {
     setLocalSttUrl(sttUrl)
     setLocalSttModel(sttModel)
     setLocalSttApiKey(sttApiKey)
-  }, [serverUrl, authMode, gatewayToken, sttUrl, sttModel, sttApiKey, showSettings])
+    setLocalUpdatePolicy(updatePolicy)
+  }, [serverUrl, authMode, gatewayToken, sttUrl, sttModel, sttApiKey, updatePolicy, showSettings])
 
   const validateUrl = (value: string) => {
     try {
@@ -77,6 +81,7 @@ export function SettingsModal() {
     setSttUrl(localSttUrl.trim())
     setSttModel(localSttModel.trim())
     setSttApiKey(localSttApiKey.trim())
+    setUpdatePolicy(localUpdatePolicy)
 
     // Try to connect
     try {
@@ -222,6 +227,47 @@ export function SettingsModal() {
                 placeholder="Only needed for OpenAI or protected endpoints"
                 autoComplete="off"
               />
+            </div>
+          </div>
+
+          <div className="form-group" style={{ borderTop: '1px solid var(--border)', paddingTop: '16px', marginTop: '16px' }}>
+            <label style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '4px', display: 'block' }}>Updates</label>
+            <span className="form-hint" style={{ marginBottom: '12px', display: 'block' }}>
+              How ClawControlRSM checks for and installs updates.
+            </span>
+
+            <div className="form-group" style={{ marginTop: '8px' }}>
+              <label htmlFor="updatePolicy">Update Preference</label>
+              <select
+                id="updatePolicy"
+                value={localUpdatePolicy}
+                onChange={(e) => setLocalUpdatePolicy(e.target.value as typeof localUpdatePolicy)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border)',
+                  backgroundColor: 'var(--bg-secondary)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.9rem',
+                  outline: 'none'
+                }}
+              >
+                <option value="instant">All updates, install immediately</option>
+                <option value="daily">Check daily</option>
+                <option value="weekly">Check weekly</option>
+                <option value="bugfix">Bug fixes only</option>
+                <option value="feature">Feature releases only</option>
+                <option value="off">Off</option>
+              </select>
+              <span className="form-hint">
+                {localUpdatePolicy === 'instant' && 'Install updates as soon as they\'re available'}
+                {localUpdatePolicy === 'daily' && 'Check once a day, prompt before installing'}
+                {localUpdatePolicy === 'weekly' && 'Check once a week, prompt before installing'}
+                {localUpdatePolicy === 'bugfix' && 'Only install patch versions (x.x.PATCH)'}
+                {localUpdatePolicy === 'feature' && 'Install minor and patch versions (x.MINOR.patch)'}
+                {localUpdatePolicy === 'off' && 'Never check for updates'}
+              </span>
             </div>
           </div>
         </div>

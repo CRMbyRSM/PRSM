@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, Menu, safeStorage, Notification } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { join, dirname } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
 
@@ -12,6 +13,121 @@ function getAppVersion(): string {
     return pkg.version || app.getVersion()
   } catch {
     return app.getVersion()
+  }
+}
+
+// --- Auto-update configuration ---
+autoUpdater.autoDownload = false
+autoUpdater.autoInstallOnAppQuit = true
+autoUpdater.allowPrerelease = false
+
+// Update policy config path (persisted so main process can read it)
+function getUpdateConfigPath(): string {
+  return join(app.getPath('userData'), 'update-config.json')
+}
+
+function readUpdateConfig(): { policy: string; lastCheck: number } {
+  try {
+    const filePath = getUpdateConfigPath()
+    if (existsSync(filePath)) {
+      return JSON.parse(readFileSync(filePath, 'utf-8'))
+    }
+  } catch { /* ignore */ }
+  return { policy: 'daily', lastCheck: 0 }
+}
+
+function writeUpdateConfig(config: { policy: string; lastCheck: number }): void {
+  try {
+    writeFileSync(getUpdateConfigPath(), JSON.stringify(config, null, 2))
+  } catch { /* ignore */ }
+}
+
+function parseSemver(version: string): { major: number; minor: number; patch: number } | null {
+  const match = version.match(/^v?(\d+)\.(\d+)\.(\d+)/)
+  if (!match) return null
+  return { major: parseInt(match[1]), minor: parseInt(match[2]), patch: parseInt(match[3]) }
+}
+
+function isUpdateAllowed(currentVersion: string, newVersion: string, policy: string): boolean {
+  if (policy === 'instant' || policy === 'daily' || policy === 'weekly') return true
+  if (policy === 'off') return false
+
+  const current = parseSemver(currentVersion)
+  const next = parseSemver(newVersion)
+  if (!current || !next) return true // can't parse, allow it
+
+  if (policy === 'bugfix') {
+    return next.major === current.major && next.minor === current.minor && next.patch > current.patch
+  }
+  if (policy === 'feature') {
+    return next.major === current.major && (next.minor > current.minor || (next.minor === current.minor && next.patch > current.patch))
+  }
+  return true
+}
+
+function shouldCheckNow(policy: string, lastCheck: number): boolean {
+  if (policy === 'off') return false
+  if (policy === 'instant') return true
+
+  const now = Date.now()
+  const intervals: Record<string, number> = {
+    daily: 86400000,
+    weekly: 604800000,
+    bugfix: 86400000,
+    feature: 86400000
+  }
+  const interval = intervals[policy] || 86400000
+  return (now - lastCheck) >= interval
+}
+
+function setupAutoUpdater(): void {
+  const config = readUpdateConfig()
+  const policy = config.policy
+
+  if (policy === 'off') return
+
+  if (policy === 'instant') {
+    autoUpdater.autoDownload = true
+  } else {
+    autoUpdater.autoDownload = false
+  }
+
+  autoUpdater.on('update-available', (info) => {
+    const currentVersion = getAppVersion()
+    const newVersion = info.version
+
+    if (!isUpdateAllowed(currentVersion, newVersion, policy)) return
+
+    const releaseNotes = typeof info.releaseNotes === 'string'
+      ? info.releaseNotes
+      : Array.isArray(info.releaseNotes)
+        ? info.releaseNotes.map((n: any) => n.note || '').join('\n')
+        : ''
+
+    mainWindow?.webContents.send('update:available', {
+      version: newVersion,
+      releaseNotes
+    })
+
+    // Update last check timestamp
+    writeUpdateConfig({ policy, lastCheck: Date.now() })
+    mainWindow?.webContents.send('update:policySync', { lastCheck: Date.now() })
+  })
+
+  autoUpdater.on('update-downloaded', () => {
+    mainWindow?.webContents.send('update:downloaded')
+  })
+
+  autoUpdater.on('error', (err) => {
+    mainWindow?.webContents.send('update:error', err?.message || 'Update error')
+  })
+
+  // Check on schedule
+  if (shouldCheckNow(policy, config.lastCheck)) {
+    // Small delay to let the window fully load
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch(() => {})
+    }, 5000)
   }
 }
 
@@ -153,6 +269,7 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
 app.whenReady().then(() => {
   loadTrustedHosts()
   createWindow()
+  setupAutoUpdater()
 })
 
 app.on('window-all-closed', () => {
@@ -263,4 +380,23 @@ ipcMain.handle('cert:trustHost', async (_event, hostname: string) => {
   trustedHosts.add(hostname)
   saveTrustedHosts()
   return { trusted: true, hostname }
+})
+
+// --- Auto-update IPC handlers ---
+
+ipcMain.handle('update:checkNow', async () => {
+  await autoUpdater.checkForUpdates()
+})
+
+ipcMain.handle('update:downloadUpdate', async () => {
+  await autoUpdater.downloadUpdate()
+})
+
+ipcMain.handle('update:installUpdate', async () => {
+  autoUpdater.quitAndInstall()
+})
+
+// Renderer syncs its update policy to the main process config file
+ipcMain.handle('update:syncPolicy', async (_event, policy: string, lastCheck: number) => {
+  writeUpdateConfig({ policy, lastCheck })
 })

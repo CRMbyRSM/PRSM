@@ -5,6 +5,7 @@ import { ChatArea } from './components/ChatArea'
 import { TopBar } from './components/TopBar'
 import { RightPanel } from './components/RightPanel'
 import { InputArea } from './components/InputArea'
+import { UpdateBanner } from './components/UpdateBanner'
 import { SettingsModal } from './components/SettingsModal'
 import { CertErrorModal } from './components/CertErrorModal'
 import { SkillDetailView } from './components/SkillDetailView'
@@ -93,6 +94,7 @@ function App() {
       <Sidebar />
 
       <main className="main-content">
+        <UpdateBanner />
         <TopBar />
         {mainView === 'chat' && (
           <>

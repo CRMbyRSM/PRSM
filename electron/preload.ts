@@ -11,6 +11,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getToken: () => ipcRenderer.invoke('auth:getToken'),
   isEncryptionAvailable: () => ipcRenderer.invoke('auth:isEncryptionAvailable'),
   showNotification: (title: string, body: string) => ipcRenderer.invoke('notification:show', title, body),
+  updateCheck: () => ipcRenderer.invoke('update:checkNow'),
+  updateDownload: () => ipcRenderer.invoke('update:downloadUpdate'),
+  updateInstall: () => ipcRenderer.invoke('update:installUpdate'),
+  onUpdateAvailable: (cb: (info: { version: string; releaseNotes: string }) => void) => {
+    ipcRenderer.on('update:available', (_e, info) => cb(info))
+  },
+  onUpdateDownloaded: (cb: () => void) => {
+    ipcRenderer.on('update:downloaded', () => cb())
+  },
+  onUpdateError: (cb: (err: string) => void) => {
+    ipcRenderer.on('update:error', (_e, err) => cb(err))
+  },
+  updateSyncPolicy: (policy: string, lastCheck: number) => ipcRenderer.invoke('update:syncPolicy', policy, lastCheck),
   platform: process.platform
 })
 
@@ -26,6 +39,13 @@ declare global {
       getToken: () => Promise<string>
       isEncryptionAvailable: () => Promise<boolean>
       showNotification: (title: string, body: string) => Promise<void>
+      updateCheck: () => Promise<void>
+      updateDownload: () => Promise<void>
+      updateInstall: () => Promise<void>
+      onUpdateAvailable: (cb: (info: { version: string; releaseNotes: string }) => void) => void
+      onUpdateDownloaded: (cb: () => void) => void
+      onUpdateError: (cb: (err: string) => void) => void
+      updateSyncPolicy: (policy: string, lastCheck: number) => Promise<void>
       platform: NodeJS.Platform
     }
   }

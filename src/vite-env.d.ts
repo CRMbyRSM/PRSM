@@ -12,6 +12,13 @@ interface Window {
     getToken: () => Promise<string>
     isEncryptionAvailable: () => Promise<boolean>
     showNotification: (title: string, body: string) => Promise<void>
+    updateCheck: () => Promise<void>
+    updateDownload: () => Promise<void>
+    updateInstall: () => Promise<void>
+    onUpdateAvailable: (cb: (info: { version: string; releaseNotes: string }) => void) => void
+    onUpdateDownloaded: (cb: () => void) => void
+    onUpdateError: (cb: (err: string) => void) => void
+    updateSyncPolicy: (policy: string, lastCheck: number) => Promise<void>
     platform: NodeJS.Platform
   }
 }

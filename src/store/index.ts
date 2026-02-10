@@ -90,6 +90,16 @@ interface AppState {
   sttApiKey: string
   setSttApiKey: (key: string) => void
 
+  // Update Settings
+  updatePolicy: 'instant' | 'daily' | 'weekly' | 'bugfix' | 'feature' | 'off'
+  setUpdatePolicy: (policy: 'instant' | 'daily' | 'weekly' | 'bugfix' | 'feature' | 'off') => void
+  lastUpdateCheck: number
+  setLastUpdateCheck: (ts: number) => void
+  availableUpdate: { version: string; releaseNotes: string } | null
+  setAvailableUpdate: (update: { version: string; releaseNotes: string } | null) => void
+  updateDownloaded: boolean
+  setUpdateDownloaded: (downloaded: boolean) => void
+
   // Notifications & Unread
   notificationsEnabled: boolean
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
@@ -324,6 +334,16 @@ export const useStore = create<AppState>()(
       setSttModel: (model) => set({ sttModel: model }),
       sttApiKey: '',
       setSttApiKey: (key) => set({ sttApiKey: key }),
+
+      // Update Settings
+      updatePolicy: 'daily',
+      setUpdatePolicy: (policy) => set({ updatePolicy: policy }),
+      lastUpdateCheck: 0,
+      setLastUpdateCheck: (ts) => set({ lastUpdateCheck: ts }),
+      availableUpdate: null,
+      setAvailableUpdate: (update) => set({ availableUpdate: update }),
+      updateDownloaded: false,
+      setUpdateDownloaded: (downloaded) => set({ updateDownloaded: downloaded }),
 
       // Notifications & Unread
       notificationsEnabled: false,
@@ -888,6 +908,8 @@ export const useStore = create<AppState>()(
         sttUrl: state.sttUrl,
         sttModel: state.sttModel,
         sttApiKey: state.sttApiKey,
+        updatePolicy: state.updatePolicy,
+        lastUpdateCheck: state.lastUpdateCheck,
         pinnedMessages: state.pinnedMessages
       })
     }

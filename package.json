@@ -1,6 +1,6 @@
 {
   "name": "clawcontrol",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Desktop and mobile client for OpenClaw AI assistant",
   "main": "dist-electron/main.js",
   "author": "ClawControlRSM Team",
@@ -37,6 +37,7 @@
     "@capacitor/splash-screen": "^8.0.0",
     "@capacitor/status-bar": "^8.0.0",
     "date-fns": "^3.3.1",
+    "electron-updater": "^6.7.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^10.1.0",
@@ -77,6 +78,13 @@
   "build": {
     "appId": "com.clawcontrolrsm.app",
     "productName": "ClawControlRSM",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "CRMbyRSM",
+        "repo": "ClawControlRSM"
+      }
+    ],
     "directories": {
       "output": "release"
     },
