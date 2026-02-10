@@ -90,8 +90,13 @@
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*",
-      "build/icon.png"
+      "dist-electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
     ],
     "win": {
       "target": [
