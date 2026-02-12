@@ -1,6 +1,6 @@
 {
   "name": "prsm",
-  "version": "1.9.20",
+  "version": "1.9.21",
   "description": "Desktop and mobile client for OpenClaw AI assistant",
   "main": "dist-electron/main.js",
   "author": "RSM Consulting",
@@ -128,6 +128,7 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false,
+      "allowElevation": true,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",

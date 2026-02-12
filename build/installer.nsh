@@ -1,24 +1,28 @@
 ; PRSM Installer — Desktop client for OpenClaw
-; One-click install: dark branded, no wizard pages
 
 !macro customHeader
   BrandingText "PRSM by RSM Consulting"
 !macroend
 
+!macro preInit
+  ; Kill PRSM before NSIS even checks if it's running
+  ; This runs before the built-in "app is running" check
+  ExecShellWait "" "cmd" '/c taskkill /F /IM "PRSM.exe" /T >nul 2>&1' SW_HIDE
+  Sleep 1500
+!macroend
+
 !macro customInit
-  ; Force-kill any running PRSM process before install/update
-  nsExec::ExecToLog 'taskkill /F /IM "PRSM.exe"'
+  ; Second kill attempt in case preInit wasn't enough
+  ExecShellWait "" "cmd" '/c taskkill /F /IM "PRSM.exe" /T >nul 2>&1' SW_HIDE
   Sleep 1000
 !macroend
 
 !macro customInstall
-  ; Desktop shortcut
   CreateShortCut "$DESKTOP\PRSM.lnk" "$INSTDIR\PRSM.exe" "" "$INSTDIR\PRSM.exe" 0
 !macroend
 
 !macro customUnInstall
-  ; Kill if still running during uninstall
-  nsExec::ExecToLog 'taskkill /F /IM "PRSM.exe"'
+  ExecShellWait "" "cmd" '/c taskkill /F /IM "PRSM.exe" /T >nul 2>&1' SW_HIDE
   Sleep 500
   Delete "$DESKTOP\PRSM.lnk"
 !macroend
