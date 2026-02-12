@@ -414,7 +414,10 @@ export class OpenClawClient {
 
   /** Check if an event's sessionKey matches the primary filter. If not, emit subagentDetected. */
   private checkSessionFilter(sessionKey?: string): boolean {
-    if (!this.primarySessionKey || !sessionKey) return true
+    // No primary filter set — allow everything
+    if (!this.primarySessionKey) return true
+    // Event has no sessionKey — allow only if we haven't set a filter yet
+    if (!sessionKey) return !this.primarySessionKey
     if (sessionKey === this.primarySessionKey) return true
     // Different session — this is likely a subagent
     this.emit('subagentDetected', { sessionKey })
@@ -424,6 +427,9 @@ export class OpenClawClient {
   private handleNotification(event: string, payload: any): void {
     switch (event) {
       case 'chat':
+        // Session filtering — drop events from non-primary sessions
+        if (!this.checkSessionFilter(payload.sessionKey || payload.message?.sessionKey)) return
+
         if (payload.state === 'delta') {
           // Assistant stream is canonical. Ignore chat deltas to avoid duplicate output.
           return

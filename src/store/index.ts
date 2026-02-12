@@ -726,6 +726,12 @@ export const useStore = create<AppState>()(
           // Set up event handlers
           client.on('message', (msgArg: unknown) => {
             const message = deepSanitize(msgArg as Message)
+
+            // Session filtering — drop messages from other sessions
+            const msgSessionKey = (message as any).sessionKey
+            const { currentSessionId } = get()
+            if (msgSessionKey && currentSessionId && msgSessionKey !== currentSessionId) return
+
             let replacedStreaming = false
 
             set((state) => {
