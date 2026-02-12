@@ -434,8 +434,8 @@ export const useStore = create<AppState>()(
         }
 
         const { [sessionId]: _, ...restCounts } = unreadCounts
-        // Set primary session filter so only this session's stream events render
-        get().client?.setPrimarySessionKey(sessionId)
+        // Clear default session key when switching (parent set preserved for concurrent streams)
+        get().client?.setPrimarySessionKey(null)
         get().stopSubagentPolling()
         set({
           currentSessionId: sessionId,
@@ -788,7 +788,7 @@ export const useStore = create<AppState>()(
           })
 
           client.on('disconnected', () => {
-            set({ connected: false, isStreaming: false, hadStreamChunks: false, activeToolCalls: [] })
+            set({ connected: false, isStreaming: false, hadStreamChunks: false, activeToolCalls: [], streamingSessionId: null })
             get().stopSubagentPolling()
           })
 
@@ -912,6 +912,37 @@ export const useStore = create<AppState>()(
             setTimeout(() => {
               get().fetchSessions().catch(() => {})
             }, 1500)
+          })
+
+          // When the server reports the canonical session key during streaming,
+          // update local state so session lookups and history retrieval use the correct key.
+          client.on('streamSessionKey', (payload: unknown) => {
+            const { sessionKey } = payload as { runId: string; sessionKey: string }
+            if (!sessionKey) return
+
+            const { streamingSessionId, currentSessionId } = get()
+            const oldKey = streamingSessionId || currentSessionId
+            if (!oldKey || sessionKey === oldKey) return
+
+            set((state) => {
+              let renamed = false
+              const sessions = state.sessions.reduce<typeof state.sessions>((acc, s) => {
+                const sKey = s.key || s.id
+                if (sKey === oldKey && !renamed) {
+                  renamed = true
+                  acc.push({ ...s, id: sessionKey, key: sessionKey })
+                } else if (sKey !== sessionKey) {
+                  acc.push(s)
+                }
+                return acc
+              }, [])
+
+              return {
+                currentSessionId: state.currentSessionId === oldKey ? sessionKey : state.currentSessionId,
+                streamingSessionId: state.streamingSessionId === oldKey ? sessionKey : state.streamingSessionId,
+                sessions
+              }
+            })
           })
 
           client.on('toolCall', (payload: unknown) => {

@@ -1,8 +1,57 @@
 // OpenClaw Client - Custom Frame-based Protocol (v3)
+// Per-session stream architecture ported from upstream ClawControl v1.1.0
+
+// ── Utility functions ──────────────────────────────────────────────
 
 export function stripAnsi(str: string): string {
-  return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+  return str
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b[()#][A-Z0-9]/g, '')
+    .replace(/\x1b[A-Z=><!*+\-\/]/gi, '')
+    .replace(/\x9b[0-9;?]*[A-Za-z]/g, '')
+    .replace(/\x07/g, '')
 }
+
+function extractTextFromContent(content: unknown): string {
+  let text = ''
+  if (typeof content === 'string') {
+    text = content
+  } else if (Array.isArray(content)) {
+    text = content
+      .filter((c: any) => c.type === 'text')
+      .map((c: any) => c.text)
+      .join('')
+  } else if (content && typeof content === 'object' && 'text' in content) {
+    text = String((content as any).text)
+  }
+  return stripAnsi(text)
+}
+
+function isHeartbeatContent(text: string): boolean {
+  const upper = text.toUpperCase()
+  return upper.includes('HEARTBEAT_OK') || upper.includes('HEARTBEAT.MD')
+}
+
+function extractToolResultText(result: unknown): string | undefined {
+  if (typeof result === 'string') return result
+  if (!result || typeof result !== 'object') return undefined
+
+  const record = result as Record<string, unknown>
+  const content = Array.isArray(record.content) ? record.content : null
+  if (!content) {
+    if (typeof record.text === 'string') return record.text
+    if (typeof record.output === 'string') return record.output
+    return undefined
+  }
+
+  const texts = content
+    .filter((c: any) => c && typeof c === 'object' && typeof c.text === 'string')
+    .map((c: any) => c.text as string)
+  return texts.length > 0 ? texts.join('\n') : undefined
+}
+
+// ── Types ──────────────────────────────────────────────────────────
 
 export interface MessageAttachment {
   type: string
@@ -76,7 +125,6 @@ export interface Skill {
   triggers: string[]
   enabled?: boolean
   content?: string
-  // Extended metadata from skills.status
   emoji?: string
   homepage?: string
   source?: string
@@ -126,6 +174,24 @@ interface EventFrame {
 
 type EventHandler = (...args: unknown[]) => void
 
+// ── Per-session stream state ───────────────────────────────────────
+
+/** Per-session stream accumulation state. */
+interface SessionStreamState {
+  source: 'chat' | 'agent' | null
+  text: string
+  mode: 'delta' | 'cumulative' | null
+  blockOffset: number
+  started: boolean
+  runId: string | null
+}
+
+function createSessionStream(): SessionStreamState {
+  return { source: null, text: '', mode: null, blockOffset: 0, started: false, runId: null }
+}
+
+// ── Client ─────────────────────────────────────────────────────────
+
 export class OpenClawClient {
   private ws: WebSocket | null = null
   private url: string
@@ -141,10 +207,17 @@ export class OpenClawClient {
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
   private authenticated = false
-  private activeStreamSource: 'chat' | 'agent' | null = null
-  private suppressChatFinal = false
-  private assistantStreamText = ''
-  private primarySessionKey: string | null = null
+
+  // Per-session stream tracking — allows concurrent agent conversations
+  // without cross-contaminating stream text buffers.
+  private sessionStreams = new Map<string, SessionStreamState>()
+  // Set of session keys that the user has actively sent messages to.
+  // Used for subagent detection: events from unknown sessions are subagents.
+  private parentSessionKeys = new Set<string>()
+  // The session key for the most recent user send (fallback for events without sessionKey).
+  private defaultSessionKey: string | null = null
+  // Guards against emitting duplicate streamSessionKey events per send cycle.
+  private sessionKeyResolved = false
 
   constructor(url: string, token: string = '', authMode: 'token' | 'password' = 'token') {
     this.url = url
@@ -152,13 +225,22 @@ export class OpenClawClient {
     this.authMode = authMode
   }
 
-  // Session filtering — when set, events from other sessions are dropped
-  // and a 'subagentDetected' event is emitted instead
+  // ── Session key management ─────────────────────────────────────
+
   setPrimarySessionKey(key: string | null): void {
-    this.primarySessionKey = key
+    if (key) {
+      this.parentSessionKeys.add(key)
+      this.defaultSessionKey = key
+      this.sessionKeyResolved = false
+    } else {
+      // Clear default when switching sessions (parent set is preserved
+      // so concurrent streams from other sessions aren't detected as subagents)
+      this.defaultSessionKey = null
+    }
   }
 
-  // Event handling
+  // ── Event handling ─────────────────────────────────────────────
+
   on(event: string, handler: EventHandler): void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, new Set())
@@ -180,7 +262,8 @@ export class OpenClawClient {
     })
   }
 
-  // Connection management
+  // ── Connection management ──────────────────────────────────────
+
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
@@ -191,7 +274,6 @@ export class OpenClawClient {
         }
 
         this.ws.onerror = (error) => {
-          // Check if this might be a certificate error (wss:// that failed to connect)
           if (this.url.startsWith('wss://') && this.ws?.readyState === WebSocket.CLOSED) {
             try {
               const urlObj = new URL(this.url)
@@ -200,7 +282,7 @@ export class OpenClawClient {
               reject(new Error(`Certificate error - visit ${httpsUrl} to accept the certificate`))
               return
             } catch {
-              // URL parsing failed, fall through to generic error
+              // URL parsing failed, fall through
             }
           }
 
@@ -210,9 +292,7 @@ export class OpenClawClient {
 
         this.ws.onclose = () => {
           this.authenticated = false
-          this.activeStreamSource = null
-          this.suppressChatFinal = false
-          this.assistantStreamText = ''
+          this.resetStreamState()
           this.emit('disconnected')
           this.attemptReconnect()
         }
@@ -240,10 +320,16 @@ export class OpenClawClient {
   }
 
   disconnect(): void {
-    this.maxReconnectAttempts = 0 // Prevent auto-reconnect
-    this.ws?.close()
+    this.maxReconnectAttempts = 0
+    if (this.ws) {
+      this.ws.onmessage = null
+      this.ws.onclose = null
+      this.ws.onerror = null
+      this.ws.close()
+    }
     this.ws = null
     this.authenticated = false
+    this.resetStreamState()
   }
 
   private async performHandshake(_nonce?: string): Promise<void> {
@@ -272,7 +358,8 @@ export class OpenClawClient {
     this.ws?.send(JSON.stringify(connectMsg))
   }
 
-  // RPC methods
+  // ── RPC ────────────────────────────────────────────────────────
+
   private async call<T>(method: string, params?: any): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('Not connected to OpenClaw')
@@ -294,7 +381,6 @@ export class OpenClawClient {
 
       this.ws!.send(JSON.stringify(request))
 
-      // Timeout after 30 seconds
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id)
@@ -307,12 +393,10 @@ export class OpenClawClient {
   private handleMessage(data: string, resolve?: () => void, reject?: (err: Error) => void): void {
     try {
       const message = JSON.parse(data)
-      
-      // 1. Handle Events
+
       if (message.type === 'event') {
         const eventFrame = message as EventFrame
-        
-        // Special case: Handshake Challenge
+
         if (eventFrame.event === 'connect.challenge') {
           this.performHandshake(eventFrame.payload?.nonce).catch((err) => {
             reject?.(err)
@@ -324,12 +408,10 @@ export class OpenClawClient {
         return
       }
 
-      // 2. Handle Responses
       if (message.type === 'res') {
         const resFrame = message as ResponseFrame
         const pending = this.pendingRequests.get(resFrame.id)
 
-        // Special case: Initial Connect Response
         if (!this.authenticated && resFrame.ok && resFrame.payload?.type === 'hello-ok') {
           this.authenticated = true
           this.emit('connected', resFrame.payload)
@@ -346,7 +428,6 @@ export class OpenClawClient {
             pending.reject(new Error(errorMsg))
           }
         } else if (!resFrame.ok && !this.authenticated) {
-          // Failed connect response
           const errorMsg = resFrame.error?.message || 'Handshake failed'
           reject?.(new Error(errorMsg))
         }
@@ -357,174 +438,271 @@ export class OpenClawClient {
     }
   }
 
-  private extractTextFromContent(content: unknown): string {
-    if (typeof content === 'string') return content
-    if (Array.isArray(content)) {
-      return content
-        .filter((c: any) => c.type === 'text')
-        .map((c: any) => c.text)
-        .join('')
+  // ── Per-session stream management ──────────────────────────────
+
+  private getStream(sessionKey: string): SessionStreamState {
+    let ss = this.sessionStreams.get(sessionKey)
+    if (!ss) {
+      ss = createSessionStream()
+      this.sessionStreams.set(sessionKey, ss)
     }
-    if (content && typeof content === 'object' && 'text' in content) {
-      return String((content as any).text)
-    }
-    return ''
+    return ss
   }
 
-  private isHeartbeatContent(text: string): boolean {
-    const upper = text.toUpperCase()
-    return upper.includes('HEARTBEAT_OK') || upper.includes('HEARTBEAT.MD')
+  /** Resolve the session key for an event. Falls back to defaultSessionKey for legacy events. */
+  private resolveEventSessionKey(eventSessionKey?: unknown): string {
+    if (typeof eventSessionKey === 'string' && eventSessionKey) return eventSessionKey
+    return this.defaultSessionKey || '__default__'
   }
 
-  // Some gateways send cumulative assistant deltas (full text-so-far) instead of strict increments.
-  // Normalize both formats to an append-only chunk for the UI layer.
-  private toAssistantIncrement(incoming: string): string {
-    if (!incoming) return ''
+  private resetSessionStream(sessionKey: string): void {
+    this.sessionStreams.delete(sessionKey)
+  }
 
-    const previous = this.assistantStreamText
+  private resetStreamState(): void {
+    this.sessionStreams.clear()
+    this.parentSessionKeys.clear()
+    this.defaultSessionKey = null
+    this.sessionKeyResolved = false
+  }
+
+  /** Emit streamSessionKey for the first event of a new send cycle if the key differs. */
+  private maybeEmitSessionKey(runId: unknown, sessionKey: string): void {
+    if (this.sessionKeyResolved) return
+    if (!this.defaultSessionKey) return
+    if (this.parentSessionKeys.has(sessionKey) && sessionKey !== this.defaultSessionKey) return
+
+    this.sessionKeyResolved = true
+    if (sessionKey === this.defaultSessionKey) return
+
+    this.parentSessionKeys.add(sessionKey)
+    this.emit('streamSessionKey', { runId, sessionKey })
+  }
+
+  private ensureStream(ss: SessionStreamState, source: 'chat' | 'agent', modeHint: 'delta' | 'cumulative', runId: unknown, sessionKey: string): void {
+    if (typeof runId === 'string' && !ss.runId) {
+      ss.runId = runId
+    }
+    this.maybeEmitSessionKey(runId, sessionKey)
+
+    if (ss.source === null) {
+      ss.source = source
+    }
+    if (ss.source !== source) return
+
+    if (!ss.mode) {
+      ss.mode = modeHint
+    }
+
+    if (!ss.started) {
+      ss.started = true
+      this.emit('streamStart', { sessionKey })
+    }
+  }
+
+  private applyStreamText(ss: SessionStreamState, nextText: string, sessionKey: string): void {
+    if (!nextText) return
+    const previous = ss.text
+    if (nextText === previous) return
+
     if (!previous) {
-      this.assistantStreamText = incoming
+      ss.text = nextText
+      this.emit('streamChunk', { text: nextText, sessionKey })
+      return
+    }
+
+    if (nextText.startsWith(previous)) {
+      const append = nextText.slice(previous.length)
+      ss.text = nextText
+      if (append) {
+        this.emit('streamChunk', { text: append, sessionKey })
+      }
+      return
+    }
+
+    // New content block — accumulate rather than replace.
+    const separator = '\n\n'
+    ss.text = ss.text + separator + nextText
+    this.emit('streamChunk', { text: separator + nextText, sessionKey })
+  }
+
+  private mergeIncoming(ss: SessionStreamState, incoming: string, modeHint: 'delta' | 'cumulative'): string {
+    const previous = ss.text
+
+    if (modeHint === 'cumulative') {
+      if (!previous) return incoming
+      if (incoming === previous) return previous
+
+      if (incoming.startsWith(previous)) return incoming
+
+      // Check if incoming extends just the current content block
+      const currentBlock = previous.slice(ss.blockOffset)
+      if (currentBlock && incoming.startsWith(currentBlock)) {
+        return previous.slice(0, ss.blockOffset) + incoming
+      }
+
+      // New content block detected
+      const separator = '\n\n'
+      ss.blockOffset = previous.length + separator.length
+      return previous + separator + incoming
+    }
+
+    // Delta mode
+    if (previous && incoming.startsWith(previous)) {
       return incoming
     }
 
-    if (incoming === previous || previous.endsWith(incoming)) {
-      return ''
+    if (previous && previous.endsWith(incoming)) {
+      return previous
     }
 
-    if (incoming.startsWith(previous)) {
-      const append = incoming.slice(previous.length)
-      this.assistantStreamText = incoming
-      return append
-    }
-
-    // Fallback for partial overlap between chunk boundaries.
-    const maxOverlap = Math.min(previous.length, incoming.length)
-    let overlap = 0
-    for (let i = maxOverlap; i > 0; i--) {
-      if (previous.endsWith(incoming.slice(0, i))) {
-        overlap = i
-        break
+    // Fallback for partial overlap
+    if (previous) {
+      const maxOverlap = Math.min(previous.length, incoming.length)
+      for (let i = maxOverlap; i > 0; i--) {
+        if (previous.endsWith(incoming.slice(0, i))) {
+          return previous + incoming.slice(i)
+        }
       }
     }
 
-    const append = incoming.slice(overlap)
-    this.assistantStreamText = previous + append
-    return append
+    return previous + incoming
   }
 
-  /** Check if an event's sessionKey matches the primary filter. If not, emit subagentDetected. */
-  private checkSessionFilter(sessionKey?: string): boolean {
-    // No primary filter set — allow everything
-    if (!this.primarySessionKey) return true
-    // Event has no sessionKey — allow only if we haven't set a filter yet
-    if (!sessionKey) return !this.primarySessionKey
-    if (sessionKey === this.primarySessionKey) return true
-    // Different session — this is likely a subagent
-    this.emit('subagentDetected', { sessionKey })
-    return false
-  }
+  // ── Event / notification handling ──────────────────────────────
 
   private handleNotification(event: string, payload: any): void {
+    const eventSessionKey = payload?.sessionKey as string | undefined
+    const sk = this.resolveEventSessionKey(eventSessionKey)
+
+    // Subagent detection: events from sessions not in the parent set
+    if (this.parentSessionKeys.size > 0 && eventSessionKey && !this.parentSessionKeys.has(eventSessionKey)) {
+      this.emit('subagentDetected', { sessionKey: eventSessionKey })
+    }
+
     switch (event) {
-      case 'chat':
-        // Session filtering — drop events from non-primary sessions
-        if (!this.checkSessionFilter(payload.sessionKey || payload.message?.sessionKey)) return
+      case 'chat': {
+        const ss = this.getStream(sk)
 
         if (payload.state === 'delta') {
-          // Assistant stream is canonical. Ignore chat deltas to avoid duplicate output.
+          this.ensureStream(ss, 'chat', 'cumulative', payload.runId, sk)
+          if (ss.source !== 'chat') return
+
+          const rawText = payload.message?.content !== undefined
+            ? extractTextFromContent(payload.message.content)
+            : (typeof payload.delta === 'string' ? stripAnsi(payload.delta) : '')
+
+          if (rawText) {
+            const nextText = this.mergeIncoming(ss, isHeartbeatContent(rawText) ? '\u2764\uFE0F' : rawText, 'cumulative')
+            this.applyStreamText(ss, nextText, sk)
+          }
           return
         } else if (payload.state === 'final') {
-          // If assistant stream was used, chat final is duplicate; ignore it.
-          if (this.suppressChatFinal || this.activeStreamSource === 'agent') {
-            if (this.activeStreamSource === 'agent') {
-              this.activeStreamSource = null
-              this.assistantStreamText = ''
-              this.emit('streamEnd')
-            }
-            this.suppressChatFinal = false
-            return
-          }
+          this.maybeEmitSessionKey(payload.runId, sk)
 
           if (payload.message) {
-            const text = this.extractTextFromContent(payload.message.content)
-            if (text && !this.isHeartbeatContent(text)) {
-              // Extract thinking safely
+            const text = extractTextFromContent(payload.message.content)
+            if (text) {
+              const id =
+                (typeof payload.message.id === 'string' && payload.message.id) ||
+                (typeof payload.runId === 'string' && payload.runId) ||
+                `msg-${Date.now()}`
+              const tsRaw = payload.message.timestamp
+              const tsNum = typeof tsRaw === 'number' ? tsRaw : NaN
+              const tsMs = Number.isFinite(tsNum) ? (tsNum > 1e12 ? tsNum : tsNum * 1000) : Date.now()
+
+              // Extract thinking from content blocks (PRSM feature)
               let thinking: string | undefined
               const rawContent = payload.message.content
               if (Array.isArray(rawContent)) {
                 const thinkingBlock = rawContent.find((c: any) => c.type === 'thinking')
                 if (thinkingBlock) {
-                  thinking = typeof thinkingBlock.thinking === 'string' ? thinkingBlock.thinking : JSON.stringify(thinkingBlock.thinking)
+                  thinking = typeof thinkingBlock.thinking === 'string'
+                    ? thinkingBlock.thinking
+                    : JSON.stringify(thinkingBlock.thinking)
                 }
               }
 
               this.emit('message', {
-                id: String(payload.message.id || `msg-${Date.now()}`),
+                id,
                 role: payload.message.role,
-                content: typeof text === 'string' ? text : String(text),
+                content: isHeartbeatContent(text) ? '\u2764\uFE0F' : text,
                 thinking,
-                timestamp: new Date().toISOString()
+                timestamp: new Date(tsMs).toISOString(),
+                sessionKey: eventSessionKey
               })
             }
           }
-          this.activeStreamSource = null
-          this.assistantStreamText = ''
-          this.emit('streamEnd')
+
+          if (ss.started) {
+            this.emit('streamEnd', { sessionKey: eventSessionKey })
+          }
+          this.resetSessionStream(sk)
         }
         break
+      }
       case 'presence':
         this.emit('agentStatus', payload)
         break
-      case 'agent':
-        // Session filtering — drop events from non-primary sessions
-        if (!this.checkSessionFilter(payload.sessionKey)) return
+      case 'agent': {
+        const ss = this.getStream(sk)
 
         if (payload.stream === 'assistant') {
-          if (this.activeStreamSource !== 'agent') {
-            this.assistantStreamText = ''
-          }
-          this.activeStreamSource = 'agent'
-          this.suppressChatFinal = true
+          const hasCanonicalText = typeof payload.data?.text === 'string'
+          this.ensureStream(ss, 'agent', hasCanonicalText ? 'cumulative' : 'delta', payload.runId, sk)
+          if (ss.source !== 'agent') return
 
-          // payload.data is usually { text: string, delta: string }
-          const rawChunk =
-            typeof payload.data?.delta === 'string'
-              ? payload.data.delta
-              : (typeof payload.data?.text === 'string' ? payload.data.text : '')
-
-          if (typeof rawChunk === 'string' && !this.isHeartbeatContent(rawChunk)) {
-            const append = this.toAssistantIncrement(rawChunk)
-            if (append) {
-              this.emit('streamChunk', append)
-            }
+          const canonicalText = typeof payload.data?.text === 'string' ? stripAnsi(payload.data.text) : ''
+          if (canonicalText) {
+            const nextText = this.mergeIncoming(ss, isHeartbeatContent(canonicalText) ? '\u2764\uFE0F' : canonicalText, 'cumulative')
+            this.applyStreamText(ss, nextText, sk)
+            return
           }
+
+          const deltaText = typeof payload.data?.delta === 'string' ? stripAnsi(payload.data.delta) : ''
+          if (deltaText) {
+            const nextText = this.mergeIncoming(ss, isHeartbeatContent(deltaText) ? '\u2764\uFE0F' : deltaText, 'delta')
+            this.applyStreamText(ss, nextText, sk)
+          }
+        } else if (payload.stream === 'tool') {
+          this.maybeEmitSessionKey(payload.runId, sk)
+
+          if (!ss.started) {
+            ss.started = true
+            this.emit('streamStart', { sessionKey: sk })
+          }
+
+          const data = payload.data || {}
+          const rawResult = extractToolResultText(data.result)
+          this.emit('toolCall', {
+            toolCallId: data.toolCallId || data.id || `tool-${Date.now()}`,
+            name: data.name || data.toolName || 'unknown',
+            phase: data.phase || (data.result !== undefined ? 'result' : 'start'),
+            result: rawResult ? stripAnsi(rawResult) : undefined,
+            sessionKey: eventSessionKey
+          })
         } else if (payload.stream === 'lifecycle') {
+          this.maybeEmitSessionKey(payload.runId, sk)
           const phase = payload.data?.phase
           const state = payload.data?.state
           if (phase === 'end' || phase === 'error' || state === 'complete' || state === 'error') {
-            if (this.activeStreamSource === 'agent') {
-              this.activeStreamSource = null
-              this.assistantStreamText = ''
-              this.emit('streamEnd')
+            if (ss.source === 'agent' && ss.started) {
+              this.emit('streamEnd', { sessionKey: eventSessionKey })
+              // Partial reset: keep source so late chat:delta events are still
+              // filtered. chat:final will delete the session stream entirely.
+              ss.started = false
             }
           }
-        } else if (payload.stream === 'tool') {
-          const data = payload.data || {}
-          this.emit('toolCall', {
-            toolCallId: data.toolCallId || data.id || `tc-${Date.now()}`,
-            name: data.name || data.toolName || 'unknown',
-            phase: data.phase || (data.result ? 'result' : 'start'),
-            result: data.result ? (typeof data.result === 'string' ? data.result : JSON.stringify(data.result)) : undefined,
-            afterMessageId: data.afterMessageId
-          })
         }
         break
+      }
       default:
         this.emit(event, payload)
     }
   }
 
-  // API Methods
+  // ── API Methods ────────────────────────────────────────────────
+
   async listSessions(): Promise<Session[]> {
     try {
       const result = await this.call<any>('sessions.list', {
@@ -532,10 +710,9 @@ export class OpenClawClient {
         includeLastMessage: true,
         limit: 50
       })
-      
+
       const sessions = Array.isArray(result) ? result : (result?.sessions || [])
       return sessions.map((s: any) => {
-        // Force-stringify everything to prevent React error #310
         const safeStr = (v: any, fallback = ''): string => {
           if (v == null) return fallback
           if (typeof v === 'string') return v
@@ -566,7 +743,6 @@ export class OpenClawClient {
   }
 
   async createSession(agentId?: string): Promise<Session> {
-    // In v3, we don't have sessions.create. We just use a new key.
     const id = `session-${Date.now()}`
     return {
       id,
@@ -605,7 +781,6 @@ export class OpenClawClient {
     try {
       const result = await this.call<any>('chat.history', { sessionKey: sessionId })
 
-      // Handle multiple possible response formats from the server
       let messages: any[]
       if (Array.isArray(result)) {
         messages = result
@@ -623,26 +798,22 @@ export class OpenClawClient {
       }
 
       const rawMessages = messages.map((m: any) => {
-          // Handle nested message structure (common in chat.history)
           const msg = m.message || m.data || m.entry || m
           let rawContent = msg.content ?? msg.body ?? msg.text
           let content = ''
-          let thinking = msg.thinking // Fallback if already parsed
+          let thinking = msg.thinking
 
           if (Array.isArray(rawContent)) {
-            // Content is an array of blocks: [{ type: 'text', text: '...' }, { type: 'thinking', thinking: '...' }]
             content = rawContent
               .filter((c: any) => c.type === 'text' || (!c.type && c.text))
               .map((c: any) => c.text)
               .join('')
 
-            // Extract thinking if present
             const thinkingBlock = rawContent.find((c: any) => c.type === 'thinking')
             if (thinkingBlock) {
               thinking = thinkingBlock.thinking
             }
 
-            // If no text blocks found, try extracting all text content
             if (!content) {
               content = rawContent
                 .map((c: any) => c.text || c.content || '')
@@ -657,14 +828,12 @@ export class OpenClawClient {
              content = ''
           }
 
-          // Aggressive heartbeat filtering
           const contentUpper = content.toUpperCase()
           const isHeartbeat =
             contentUpper.includes('HEARTBEAT_OK') ||
             contentUpper.includes('READ HEARTBEAT.MD') ||
             content.includes('# HEARTBEAT - Event-Driven Status')
 
-          // Filter out items without content (e.g. status updates) or heartbeats
           if ((!content && !thinking) || isHeartbeat) return null
 
           const finalContent = typeof content === 'string' ? stripAnsi(content) : String(content || '')
@@ -725,16 +894,14 @@ export class OpenClawClient {
     await this.call('chat.abort', { sessionKey: sessionId })
   }
 
-  // Resolve avatar URL - handles relative paths like /avatar/main
+  // Resolve avatar URL
   private resolveAvatarUrl(avatar: string | undefined, agentId: string): string | undefined {
     if (!avatar) return undefined
 
-    // Already a full URL or data URI
     if (avatar.startsWith('http://') || avatar.startsWith('https://') || avatar.startsWith('data:')) {
       return avatar
     }
 
-    // Server-relative path like /avatar/main - convert to full URL
     if (avatar.startsWith('/avatar/')) {
       try {
         const wsUrl = new URL(this.url)
@@ -745,7 +912,6 @@ export class OpenClawClient {
       }
     }
 
-    // Looks like a valid relative file path - construct avatar URL
     if (avatar.includes('/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(avatar)) {
       try {
         const wsUrl = new URL(this.url)
@@ -756,7 +922,6 @@ export class OpenClawClient {
       }
     }
 
-    // Invalid avatar (like single character from parsing error)
     return undefined
   }
 
@@ -766,13 +931,11 @@ export class OpenClawClient {
       const result = await this.call<any>('agents.list')
       const agents = Array.isArray(result) ? result : (result?.agents || result?.items || result?.list || [])
 
-      // Enrich each agent with identity from agent.identity.get
       const enrichedAgents: Agent[] = []
       for (const a of agents) {
         const agentId = String(a.agentId || a.id || 'main')
         let identity = a.identity || {}
 
-        // Fetch identity if not already included
         if (!identity.name && !identity.avatar) {
           try {
             const fetchedIdentity = await this.call<any>('agent.identity.get', { agentId })
@@ -785,14 +948,12 @@ export class OpenClawClient {
               }
             }
           } catch {
-            // Identity fetch failed, continue with defaults
+            // Identity fetch failed
           }
         }
 
-        // Resolve avatar URL
         const avatarUrl = this.resolveAvatarUrl(identity.avatarUrl || identity.avatar, agentId)
 
-        // Clean up emoji - filter out placeholder text
         let emoji = identity.emoji
         if (emoji && (emoji.includes('none') || emoji.includes('*') || emoji.length > 4)) {
           emoji = undefined
@@ -819,7 +980,6 @@ export class OpenClawClient {
     }
   }
 
-  // Get agent identity
   async getAgentIdentity(agentId: string): Promise<{ name?: string; emoji?: string; avatar?: string; avatarUrl?: string } | null> {
     try {
       return await this.call<any>('agent.identity.get', { agentId })
@@ -828,7 +988,6 @@ export class OpenClawClient {
     }
   }
 
-  // Get agent workspace files
   async getAgentFiles(agentId: string): Promise<{ workspace: string; files: Array<{ name: string; path: string; missing: boolean; size?: number }> } | null> {
     try {
       return await this.call<any>('agents.files.list', { agentId })
@@ -837,7 +996,6 @@ export class OpenClawClient {
     }
   }
 
-  // Get agent file content
   async getAgentFile(agentId: string, fileName: string): Promise<{ content?: string; missing: boolean } | null> {
     try {
       const result = await this.call<any>('agents.files.get', { agentId, name: fileName })
@@ -847,7 +1005,6 @@ export class OpenClawClient {
     }
   }
 
-  // Set agent file content
   async setAgentFile(agentId: string, fileName: string, content: string): Promise<boolean> {
     try {
       await this.call<any>('agents.files.set', { agentId, name: fileName, content })
@@ -898,7 +1055,6 @@ export class OpenClawClient {
       const result = await this.call<any>('cron.list')
       const jobs = Array.isArray(result) ? result : (result?.cronJobs || result?.jobs || result?.cron || result?.items || result?.list || [])
       return jobs.map((c: any) => {
-        // Handle complex schedule objects (e.g., { kind, expr, tz })
         let schedule = c.schedule
         if (typeof schedule === 'object' && schedule !== null) {
           schedule = schedule.expr || schedule.display || JSON.stringify(schedule)
