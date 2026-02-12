@@ -4,16 +4,12 @@
   BrandingText "PRSM by RSM Consulting"
 !macroend
 
-!macro preInit
-  ; Kill PRSM before NSIS even checks if it's running
-  ; This runs before the built-in "app is running" check
-  ExecShellWait "" "cmd" '/c taskkill /F /IM "PRSM.exe" /T >nul 2>&1' SW_HIDE
-  Sleep 1500
-!macroend
-
-!macro customInit
-  ; Second kill attempt in case preInit wasn't enough
-  ExecShellWait "" "cmd" '/c taskkill /F /IM "PRSM.exe" /T >nul 2>&1' SW_HIDE
+; Override electron-builder's broken app-running detection.
+; The built-in _CHECK_APP_RUNNING uses PowerShell Get-CimInstance which
+; false-positives when the app isn't even running (known issue #6865/#8131).
+; Our version: just force-kill PRSM.exe and move on.
+!macro customCheckAppRunning
+  nsExec::Exec `taskkill /F /IM "${APP_EXECUTABLE_FILENAME}" /T`
   Sleep 1000
 !macroend
 
@@ -22,7 +18,7 @@
 !macroend
 
 !macro customUnInstall
-  ExecShellWait "" "cmd" '/c taskkill /F /IM "PRSM.exe" /T >nul 2>&1' SW_HIDE
+  nsExec::Exec `taskkill /F /IM "${APP_EXECUTABLE_FILENAME}" /T`
   Sleep 500
   Delete "$DESKTOP\PRSM.lnk"
 !macroend
