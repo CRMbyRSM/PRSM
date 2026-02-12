@@ -4,13 +4,26 @@
   BrandingText "PRSM by RSM Consulting"
 !macroend
 
-; Override electron-builder's broken app-running detection.
-; The built-in _CHECK_APP_RUNNING uses PowerShell Get-CimInstance which
-; false-positives when the app isn't even running (known issue #6865/#8131).
-; Our version: just force-kill PRSM.exe and move on.
+; Override electron-builder's built-in app-running check.
+; Uses the nsProcess plugin (bundled with electron-builder's NSIS)
+; to properly detect, gracefully close, then force-kill if needed.
 !macro customCheckAppRunning
-  nsExec::Exec `taskkill /F /IM "${APP_EXECUTABLE_FILENAME}" /T`
-  Sleep 1000
+  ; Check if PRSM is running
+  ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+  ${if} $R0 == 0
+    ; Try graceful close first (sends WM_CLOSE)
+    ${nsProcess::CloseProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+    Sleep 3000
+
+    ; Check again — still running?
+    ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+    ${if} $R0 == 0
+      ; Force kill
+      ${nsProcess::KillProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+      Sleep 2000
+    ${endif}
+  ${endif}
+  ${nsProcess::Unload}
 !macroend
 
 !macro customInstall
@@ -18,7 +31,11 @@
 !macroend
 
 !macro customUnInstall
-  nsExec::Exec `taskkill /F /IM "${APP_EXECUTABLE_FILENAME}" /T`
-  Sleep 500
+  ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+  ${if} $R0 == 0
+    ${nsProcess::KillProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+    Sleep 1000
+  ${endif}
+  ${nsProcess::Unload}
   Delete "$DESKTOP\PRSM.lnk"
 !macroend
