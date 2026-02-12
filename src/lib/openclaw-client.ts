@@ -13,6 +13,30 @@ export function stripAnsi(str: string): string {
     .replace(/\x07/g, '')
 }
 
+/** Strip inline thinking/thought/antthinking tags from content (matches webchat behavior) */
+export function stripThinkingTags(text: string): string {
+  if (!text) return text
+  // Remove <final>...</final> tags
+  let result = text.replace(/<\s*\/?\s*final\b[^<>]*>/gi, '')
+  // Remove <thinking>...</thinking>, <thought>...</thought>, <antthinking>...</antthinking> blocks
+  const tagPattern = /<\s*(\/?)\s*(?:think(?:ing)?|thought|antthinking)\b[^<>]*>/gi
+  let out = ''
+  let lastIndex = 0
+  let insideThinking = false
+  for (const match of result.matchAll(tagPattern)) {
+    const idx = match.index ?? 0
+    const isClosing = match[1] === '/'
+    if (!insideThinking) {
+      out += result.slice(lastIndex, idx)
+      if (!isClosing) insideThinking = true
+    }
+    if (isClosing) insideThinking = false
+    lastIndex = idx + match[0].length
+  }
+  out += result.slice(lastIndex)
+  return out.trimStart()
+}
+
 function extractTextFromContent(content: unknown): string {
   let text = ''
   if (typeof content === 'string') {
@@ -626,7 +650,7 @@ export class OpenClawClient {
               this.emit('message', {
                 id,
                 role: payload.message.role,
-                content: isHeartbeatContent(text) ? '\u2764\uFE0F' : text,
+                content: isHeartbeatContent(text) ? '\u2764\uFE0F' : stripThinkingTags(text),
                 thinking,
                 timestamp: new Date(tsMs).toISOString(),
                 sessionKey: eventSessionKey
@@ -844,7 +868,7 @@ export class OpenClawClient {
 
           if ((!content && !thinking) || isHeartbeat) return null
 
-          const finalContent = typeof content === 'string' ? stripAnsi(content) : String(content || '')
+          const finalContent = stripThinkingTags(typeof content === 'string' ? stripAnsi(content) : String(content || ''))
           const finalThinking = thinking ? stripAnsi(typeof thinking === 'string' ? thinking : JSON.stringify(thinking)) : undefined
 
           return {

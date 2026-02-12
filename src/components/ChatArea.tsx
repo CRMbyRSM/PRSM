@@ -83,31 +83,19 @@ const channelLabels: Record<string, { label: string; icon: string }> = {
 const remarkPlugins = [remarkGfm]
 const rehypePlugins = [rehypeSanitize]
 
-/** Collapsible thinking block — collapsed by default to reduce clutter */
+/** Compact thinking block — matches webchat style: small, muted, truncated */
 function ThinkingBlock({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false)
   const safeContent = safe(content)
-  // Truncate preview to first ~80 chars
-  const preview = safeContent.length > 80 ? safeContent.slice(0, 80) + '…' : safeContent
 
   return (
-    <div className={`thinking-block ${expanded ? 'expanded' : 'collapsed'}`}>
-      <button className="thinking-header" onClick={() => setExpanded(!expanded)}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M12 16v-4M12 8h.01" />
-        </svg>
-        <span className="thinking-label-text">Thinking</span>
-        {!expanded && <span className="thinking-preview">{preview}</span>}
-        <svg className={`thinking-chevron ${expanded ? 'expanded' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M6 9l6 6 6-6" />
-        </svg>
-      </button>
-      {expanded && (
-        <div className="thinking-content">
-          <MessageContent content={safeContent} />
-        </div>
-      )}
+    <div
+      className={`thinking-block ${expanded ? 'expanded' : ''}`}
+      onClick={() => setExpanded(!expanded)}
+    >
+      <em>Reasoning:</em>
+      {' '}
+      <span className="thinking-text">{safeContent}</span>
     </div>
   )
 }

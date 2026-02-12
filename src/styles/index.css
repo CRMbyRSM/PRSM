@@ -1527,87 +1527,48 @@ a {
 }
 
 /* Thinking Block */
+/* Compact thinking block — matches webchat style */
 .thinking-block {
-  background: var(--bg-deep);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--space-md);
-  overflow: hidden;
-}
-
-.thinking-block.collapsed {
-  opacity: 0.7;
-}
-
-.thinking-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: var(--accent-amber);
-  padding: var(--space-sm) var(--space-md);
-  background: none;
-  border: none;
-  width: 100%;
-  cursor: pointer;
-  text-align: left;
-}
-
-.thinking-header:hover {
-  background: var(--bg-elevated);
-}
-
-.thinking-header > svg:first-child {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-}
-
-.thinking-label-text {
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.thinking-preview {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--text-tertiary);
+  font-size: 12px;
   font-style: italic;
+  line-height: 1.4;
+  cursor: pointer;
+  max-height: 80px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
+  transition: max-height 0.3s ease;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
-.thinking-chevron {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  transition: transform 0.2s ease;
-  margin-left: auto;
+.thinking-block.expanded {
+  max-height: none;
+  overflow: visible;
 }
 
-.thinking-chevron.expanded {
-  transform: rotate(180deg);
+.thinking-block em {
+  font-style: italic;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.thinking-block .thinking-text {
+  font-style: italic;
+}
+
+[data-theme="light"] .thinking-block {
+  border-color: rgba(16, 24, 40, 0.25);
+  background: rgba(16, 24, 40, 0.04);
 }
 
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
-}
-
-.thinking-content {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  padding: 0 var(--space-md) var(--space-md);
-  border-top: 1px solid var(--border-subtle);
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.thinking-content .markdown-content {
-  font-style: italic;
-  opacity: 0.85;
 }
 
 /* Typing Indicator */
