@@ -875,7 +875,7 @@ export class OpenClawClient {
     }
 
     if (params.thinking) {
-      payload.thinking = 'normal'
+      payload.thinking = 'medium'
     }
 
     if (params.attachments && params.attachments.length > 0) {

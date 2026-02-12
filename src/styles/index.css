@@ -1042,12 +1042,23 @@ a {
   color: var(--accent-cyan);
   opacity: 0.5;
   margin-bottom: var(--space-lg);
+  transition: opacity 0.3s ease;
 }
 
 .empty-logo img {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  transition: transform 0.3s ease;
+}
+
+.empty-logo.working {
+  opacity: 1;
+}
+
+.empty-logo.working img {
+  animation: avatar-spin 2s linear infinite;
+  filter: drop-shadow(0 0 8px rgba(23, 161, 146, 0.6));
 }
 
 .chat-empty h2 {
@@ -1249,11 +1260,46 @@ a {
   justify-content: center;
   color: white;
   flex-shrink: 0;
+  position: relative;
 }
 
 .message-avatar svg {
   width: 24px;
   height: 24px;
+}
+
+.message-avatar.agent-avatar {
+  background: transparent;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.agent-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  transition: filter 0.3s ease;
+}
+
+/* Working state — pulse ring around avatar */
+.message-avatar.agent-avatar.working {
+  box-shadow: 0 0 0 2px var(--accent-cyan), 0 0 12px rgba(23, 161, 146, 0.5);
+  animation: avatar-pulse 1.5s ease-in-out infinite;
+}
+
+.message-avatar.agent-avatar.working .agent-avatar-img {
+  animation: avatar-spin 2s linear infinite;
+}
+
+@keyframes avatar-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent-cyan), 0 0 8px rgba(23, 161, 146, 0.3); }
+  50% { box-shadow: 0 0 0 3px var(--accent-cyan), 0 0 16px rgba(23, 161, 146, 0.6); }
+}
+
+@keyframes avatar-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .message-avatar.user-avatar {

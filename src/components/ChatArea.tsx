@@ -267,7 +267,7 @@ export function ChatArea() {
     return (
       <div className="chat-area">
         <div className="chat-empty">
-          <div className="empty-logo">
+          <div className={`empty-logo ${isStreaming ? 'working' : 'idle'}`}>
             <img src={logoUrl} alt="PRSM logo" />
           </div>
           <h2>Start a Conversation</h2>
@@ -344,10 +344,8 @@ export function ChatArea() {
 
         {isStreaming && !hadStreamChunks && (
           <div className="message agent typing-indicator-container">
-            <div className="message-avatar">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2zm-4 12a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z" />
-              </svg>
+            <div className="message-avatar agent-avatar working">
+              <img src={logoUrl} alt="Agent" className="agent-avatar-img" />
             </div>
             <div className="message-content">
               <div className="typing-indicator">
@@ -554,6 +552,7 @@ const MessageBubble = memo(function MessageBubble({
   isStreaming?: boolean
   sessionId?: string | null
 }) {
+  const thinkingEnabled = useStore((s) => s.thinkingEnabled)
   const isUser = message.role === 'user'
   const time = format(new Date(message.timestamp), 'h:mm a')
   const showBadge = channel && channel !== 'direct'
@@ -579,10 +578,8 @@ const MessageBubble = memo(function MessageBubble({
   return (
     <div className={`message ${isUser ? 'user' : 'agent'}`}>
       {!isUser && (
-        <div className="message-avatar">
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7h1a1 1 0 011 1v3a1 1 0 01-1 1h-1v1a2 2 0 01-2 2H5a2 2 0 01-2-2v-1H2a1 1 0 01-1-1v-3a1 1 0 011-1h1a7 7 0 017-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 012-2zm-4 12a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm8 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z" />
-          </svg>
+        <div className="message-avatar agent-avatar">
+          <img src={logoUrl} alt="Agent" className="agent-avatar-img" />
         </div>
       )}
 
