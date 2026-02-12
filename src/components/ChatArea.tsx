@@ -243,9 +243,21 @@ export function ChatArea() {
     return map
   }, [activeSubagents])
 
+  // Reset auto-scroll when switching sessions so we always land at the bottom
+  const prevSessionRef = useRef(currentSessionId)
+  useEffect(() => {
+    if (currentSessionId !== prevSessionRef.current) {
+      isAutoScrollRef.current = true
+      prevSessionRef.current = currentSessionId
+    }
+  }, [currentSessionId])
+
   useEffect(() => {
     if (isAutoScrollRef.current) {
-      chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
+      // Use rAF to ensure scroll happens after React has flushed the DOM
+      requestAnimationFrame(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
+      })
     }
   }, [messages])
 

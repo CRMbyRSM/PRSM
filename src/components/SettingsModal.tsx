@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store'
 
 export function SettingsModal() {
@@ -29,12 +29,19 @@ export function SettingsModal() {
   const [localUpdatePolicy, setLocalUpdatePolicy] = useState(updatePolicy)
   const [error, setError] = useState('')
 
+  // Only reset local state when the modal OPENS (showSettings goes true)
+  // Not on every re-render that changes store values
+  const prevShowRef = useRef(false)
   useEffect(() => {
-    setUrl(serverUrl)
-    setMode(authMode)
-    setToken(gatewayToken)
-    setLocalUpdatePolicy(updatePolicy)
-  }, [serverUrl, authMode, gatewayToken, updatePolicy, showSettings])
+    if (showSettings && !prevShowRef.current) {
+      setUrl(serverUrl)
+      setMode(authMode)
+      setToken(gatewayToken)
+      setLocalUpdatePolicy(updatePolicy)
+      setError('')
+    }
+    prevShowRef.current = showSettings
+  }, [showSettings])
 
   const validateUrl = (value: string) => {
     try {
@@ -50,8 +57,11 @@ export function SettingsModal() {
 
   const handleSave = async () => {
     setError('')
-    const trimmedUrl = url.trim()
-    const trimmedToken = token.trim()
+    // Read directly from DOM as fallback — Android WebView sometimes desyncs React state
+    const urlInput = document.getElementById('serverUrl') as HTMLInputElement
+    const tokenInput = document.getElementById('gatewayToken') as HTMLInputElement
+    const trimmedUrl = (urlInput?.value || url).trim()
+    const trimmedToken = (tokenInput?.value || token).trim()
 
     if (!trimmedUrl) {
       setError('Server URL is required')
