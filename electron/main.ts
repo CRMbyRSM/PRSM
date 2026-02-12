@@ -280,6 +280,19 @@ app.on('window-all-closed', () => {
   }
 })
 
+// Ensure the process fully exits — kill any lingering handles (WebSocket, updater)
+app.on('will-quit', () => {
+  if (mainWindow) {
+    mainWindow.destroy()
+    mainWindow = null
+  }
+})
+
+// Hard exit fallback — if quit hangs for more than 5s, force exit
+app.on('quit', () => {
+  setTimeout(() => process.exit(0), 5000).unref()
+})
+
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow()
