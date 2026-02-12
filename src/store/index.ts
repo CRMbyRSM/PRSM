@@ -1042,7 +1042,7 @@ export const useStore = create<AppState>()(
       },
 
       sendMessage: async (content: string, attachments?: Array<{type: string, mimeType: string, content: string}>) => {
-        const { client, currentSessionId, thinkingEnabled, currentAgentId } = get()
+        const { client, currentSessionId, currentAgentId } = get()
         if (!client || (!content.trim() && (!attachments || attachments.length === 0))) return
 
         const selectedSessionId = currentSessionId
@@ -1106,7 +1106,6 @@ export const useStore = create<AppState>()(
             sessionId: requestedSessionId,
             content,
             agentId: currentAgentId || undefined,
-            thinking: thinkingEnabled,
             attachments
           })
 

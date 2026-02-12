@@ -860,7 +860,6 @@ export class OpenClawClient {
     sessionId?: string
     content: string
     agentId?: string
-    thinking?: boolean
     attachments?: Array<{type: string, mimeType: string, content: string}>
   }): Promise<{ sessionKey?: string }> {
     const idempotencyKey = crypto.randomUUID()
@@ -872,10 +871,6 @@ export class OpenClawClient {
 
     if (params.sessionId) {
       payload.sessionKey = params.sessionId
-    }
-
-    if (params.thinking) {
-      payload.thinking = 'medium'
     }
 
     if (params.attachments && params.attachments.length > 0) {
