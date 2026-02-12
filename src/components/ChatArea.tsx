@@ -154,6 +154,7 @@ export function ChatArea() {
   const sessions = useStore((s) => s.sessions)
   const activeToolCalls = useStore((s) => s.activeToolCalls)
   const activeSubagents = useStore((s) => s.activeSubagents)
+  const thinkingEnabled = useStore((s) => s.thinkingEnabled)
   const openSubagentPopout = useStore((s) => s.openSubagentPopout)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const isAutoScrollRef = useRef(true)
@@ -632,7 +633,7 @@ const MessageBubble = memo(function MessageBubble({
               ))}
             </div>
           )}
-          {message.thinking && (
+          {thinkingEnabled && message.thinking && (
             <ThinkingBlock content={message.thinking} />
           )}
           <MessageContent content={safe(message.content)} />

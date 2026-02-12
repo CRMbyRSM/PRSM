@@ -727,13 +727,14 @@ export const useStore = create<AppState>()(
           client.on('message', (msgArg: unknown) => {
             const message = deepSanitize(msgArg as Message)
 
-            // Session filtering — drop messages from other sessions.
-            // When sessionKey is missing (heartbeats, compactions), fall back to
-            // streamingSessionId.  If STILL no key and we're viewing a specific
-            // session, drop the message — it belongs to a different session.
+            // Session filtering — drop messages that explicitly belong to other sessions.
+            // When sessionKey is missing, fall back to streamingSessionId (active stream)
+            // then currentSessionId (the session we're viewing — gateway sends events
+            // for the active session without always tagging them).
+            // Only DROP when a message is explicitly tagged for a DIFFERENT session.
             const msgSessionKey = (message as any).sessionKey || get().streamingSessionId
             const { currentSessionId } = get()
-            if (currentSessionId && (!msgSessionKey || msgSessionKey !== currentSessionId)) return
+            if (msgSessionKey && currentSessionId && msgSessionKey !== currentSessionId) return
 
             let replacedStreaming = false
 
@@ -808,9 +809,8 @@ export const useStore = create<AppState>()(
             // use that as ground truth. Otherwise use the event's sessionKey.
             const streamSession = existingStream || sessionKey
 
-            // Drop events for sessions we're not viewing.
-            // When streamSession is unknown (no key at all), drop if we're in a session.
-            if (currentSessionId && (!streamSession || streamSession !== currentSessionId)) return
+            // Drop events explicitly tagged for a different session.
+            if (streamSession && currentSessionId && streamSession !== currentSessionId) return
 
             // Save the streaming session so streamChunk/streamEnd can filter reliably
             // even when individual chunks don't carry sessionKey
@@ -840,10 +840,10 @@ export const useStore = create<AppState>()(
 
             // Session filtering — use streamingSessionId (set by sendMessage or streamStart)
             // as the reliable source; fall back to per-chunk sessionKey.
-            // Drop chunks with no identifiable session when we're viewing a specific session.
+            // Only drop chunks explicitly tagged for a different session.
             const { currentSessionId, streamingSessionId } = get()
             const chunkSession = sessionKey || streamingSessionId
-            if (currentSessionId && (!chunkSession || chunkSession !== currentSessionId)) return
+            if (chunkSession && currentSessionId && chunkSession !== currentSessionId) return
 
             // Skip empty chunks
             if (!text) return
@@ -879,7 +879,7 @@ export const useStore = create<AppState>()(
             const { sessionKey } = (payload || {}) as { sessionKey?: string }
             const { currentSessionId, streamingSessionId } = get()
             const endSession = sessionKey || streamingSessionId
-            if (currentSessionId && (!endSession || endSession !== currentSessionId)) {
+            if (endSession && currentSessionId && endSession !== currentSessionId) {
               // Stream ended for a different session — clear streaming state if it was ours
               if (streamingSessionId && sessionKey === streamingSessionId) {
                 set({ isStreaming: false, streamingSessionId: null, hadStreamChunks: false, activeToolCalls: [] })
@@ -953,7 +953,7 @@ export const useStore = create<AppState>()(
           client.on('toolCall', (payload: unknown) => {
             const tc = payload as { toolCallId: string; name: string; phase: string; result?: string; sessionKey?: string }
             const { currentSessionId: csid } = get()
-            if (csid && (!tc.sessionKey || tc.sessionKey !== csid)) return
+            if (tc.sessionKey && csid && tc.sessionKey !== csid) return
 
             set((state) => {
               const idx = state.activeToolCalls.findIndex(t => t.toolCallId === tc.toolCallId)
