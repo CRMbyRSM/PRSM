@@ -799,11 +799,17 @@ export class OpenClawClient {
 
       const rawMessages = messages.map((m: any) => {
           const msg = m.message || m.data || m.entry || m
+          const role = msg.role || m.role || 'assistant'
+
+          // Skip tool results and system messages — they're not user-facing chat
+          if (role === 'tool' || role === 'system') return null
+
           let rawContent = msg.content ?? msg.body ?? msg.text
           let content = ''
           let thinking = msg.thinking
 
           if (Array.isArray(rawContent)) {
+            // Filter out tool_use and tool_result blocks — only keep text and thinking
             content = rawContent
               .filter((c: any) => c.type === 'text' || (!c.type && c.text))
               .map((c: any) => c.text)
@@ -815,7 +821,9 @@ export class OpenClawClient {
             }
 
             if (!content) {
+              // Last resort: join non-tool blocks
               content = rawContent
+                .filter((c: any) => c.type !== 'tool_use' && c.type !== 'tool_result' && c.type !== 'thinking')
                 .map((c: any) => c.text || c.content || '')
                 .filter(Boolean)
                 .join('')
@@ -841,7 +849,7 @@ export class OpenClawClient {
 
           return {
             id: String(msg.id || m.id || m.runId || `history-${Math.random()}`),
-            role: msg.role || m.role || 'assistant',
+            role,
             content: finalContent,
             thinking: finalThinking,
             timestamp: new Date(msg.timestamp || m.timestamp || msg.ts || m.ts || msg.createdAt || m.createdAt || Date.now()).toISOString()

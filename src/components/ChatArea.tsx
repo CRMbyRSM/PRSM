@@ -306,6 +306,7 @@ export function ChatArea() {
                   channel={channel}
                   isStreaming={isLastMessage && isStreaming}
                   sessionId={currentSessionId}
+                  thinkingEnabled={thinkingEnabled}
                 />
               </MessageErrorBoundary>
               {msgToolCalls && msgToolCalls.length > 0 && (
@@ -544,15 +545,16 @@ const MessageBubble = memo(function MessageBubble({
   agentName,
   channel,
   isStreaming,
-  sessionId
+  sessionId,
+  thinkingEnabled
 }: {
   message: Message
   agentName?: string
   channel?: string
   isStreaming?: boolean
   sessionId?: string | null
+  thinkingEnabled?: boolean
 }) {
-  const thinkingEnabled = useStore((s) => s.thinkingEnabled)
   const isUser = message.role === 'user'
   const time = format(new Date(message.timestamp), 'h:mm a')
   const showBadge = channel && channel !== 'direct'
@@ -653,6 +655,7 @@ const MessageBubble = memo(function MessageBubble({
     prev.message.content === next.message.content &&
     prev.agentName === next.agentName &&
     prev.channel === next.channel &&
-    prev.sessionId === next.sessionId
+    prev.sessionId === next.sessionId &&
+    prev.thinkingEnabled === next.thinkingEnabled
   )
 })
