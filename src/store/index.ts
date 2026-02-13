@@ -131,6 +131,8 @@ interface AppState {
   // Sessions
   sessions: Session[]
   currentSessionId: string | null
+  pendingSessionLabel: string | null
+  setPendingSessionLabel: (label: string | null) => void
   setCurrentSession: (sessionId: string) => void
   createNewSession: () => Promise<void>
   deleteSession: (sessionId: string) => void
@@ -422,6 +424,8 @@ export const useStore = create<AppState>()(
       // Sessions
       sessions: [],
       currentSessionId: null,
+      pendingSessionLabel: null,
+      setPendingSessionLabel: (label) => set({ pendingSessionLabel: label }),
       setCurrentSession: (sessionId) => {
         const { currentSessionId, unreadCounts, mainView } = get()
 
@@ -1062,7 +1066,7 @@ export const useStore = create<AppState>()(
                 {
                   id: requestedSessionId,
                   key: requestedSessionId,
-                  title: 'New Chat',
+                  title: state.pendingSessionLabel || 'New Chat',
                   agentId: currentAgentId || undefined,
                   createdAt: now,
                   updatedAt: now
@@ -1159,6 +1163,13 @@ export const useStore = create<AppState>()(
               ]
             }
           })
+
+          // Apply pending session label if set
+          const pendingLabel = get().pendingSessionLabel
+          if (pendingLabel) {
+            set({ pendingSessionLabel: null })
+            get().updateSessionLabel(serverKey, pendingLabel).catch(() => {})
+          }
 
           // Sync canonical titles/metadata from the server.
           get().fetchSessions().catch(() => {})

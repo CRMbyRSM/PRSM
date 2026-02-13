@@ -17,6 +17,7 @@ export function Sidebar() {
     createNewSession,
     deleteSession,
     updateSessionLabel,
+    setPendingSessionLabel,
     agents,
     currentAgentId,
     setCurrentAgent,
@@ -25,6 +26,18 @@ export function Sidebar() {
   } = useStore()
 
   const currentAgent = agents.find((a) => a.id === currentAgentId)
+
+  // New chat naming
+  const [showNewChatModal, setShowNewChatModal] = useState(false)
+
+  const handleNewChat = (label?: string) => {
+    if (label?.trim()) {
+      setPendingSessionLabel(label.trim())
+    }
+    createNewSession()
+    setShowNewChatModal(false)
+    setSidebarOpen(false)
+  }
 
   // Session search filter
   const [sessionFilter, setSessionFilter] = useState('')
@@ -92,7 +105,7 @@ export function Sidebar() {
           </button>
         </div>
 
-        <button className="new-chat-btn" onClick={createNewSession}>
+        <button className="new-chat-btn" onClick={() => setShowNewChatModal(true)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 5v14M5 12h14" />
           </svg>
@@ -264,6 +277,14 @@ export function Sidebar() {
           }}
         />
       )}
+
+      {/* New Chat Modal */}
+      {showNewChatModal && (
+        <NewChatModal
+          onStart={handleNewChat}
+          onClose={() => setShowNewChatModal(false)}
+        />
+      )}
     </>
   )
 }
@@ -312,6 +333,57 @@ function RenameModal({ currentTitle, onSave, onClose }: {
               </button>
               <button type="submit" className="btn btn-primary">
                 Save
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NewChatModal({ onStart, onClose }: {
+  onStart: (label?: string) => void
+  onClose: () => void
+}) {
+  const [label, setLabel] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>New Chat</h2>
+          <button className="modal-close" onClick={onClose}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="modal-body">
+          <form onSubmit={(e) => {
+            e.preventDefault()
+            onStart(label)
+          }}>
+            <div className="form-group">
+              <label>Session Name (optional)</label>
+              <input
+                ref={inputRef}
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="e.g. Website redesign, Bug fix…"
+              />
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={() => onStart()}>
+                Skip
+              </button>
+              <button type="submit" className="btn btn-primary">
+                Start Chat
               </button>
             </div>
           </form>
