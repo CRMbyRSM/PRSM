@@ -282,6 +282,9 @@ export function InputArea() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSubmit()
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      handleSubmit()
     }
   }
 
@@ -506,7 +509,7 @@ export function InputArea() {
           {' '}/{' '}{maxLength}
         </span>
         <span className="keyboard-hint">
-          Press <kbd>Enter</kbd> to send, <kbd>Shift+Enter</kbd> for new line
+          Press <kbd>Enter</kbd> or <kbd>Ctrl+Enter</kbd> to send, <kbd>Shift+Enter</kbd> for new line
         </span>
       </div>
       <VoiceSettings

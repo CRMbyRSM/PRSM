@@ -373,6 +373,128 @@ a {
   display: none;
 }
 
+/* Session Search */
+.session-search {
+  position: relative;
+  padding: 0 var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.session-search-icon {
+  position: absolute;
+  left: calc(var(--space-sm) + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.session-search-input {
+  width: 100%;
+  padding: 6px 28px 6px 30px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.session-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.session-search-input:focus {
+  border-color: var(--accent-cyan);
+}
+
+.session-search-clear {
+  position: absolute;
+  right: calc(var(--space-sm) + 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.session-search-clear svg {
+  width: 12px;
+  height: 12px;
+}
+
+.session-search-clear:hover {
+  color: var(--text-primary);
+}
+
+.sidebar.collapsed .session-search {
+  display: none;
+}
+
+/* Check for Updates Button */
+.check-updates-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 8px var(--space-sm);
+  margin: var(--space-xs) var(--space-sm);
+  background: none;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+  width: calc(100% - var(--space-sm) * 2);
+}
+
+.check-updates-btn:hover {
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+
+.check-updates-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.check-updates-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.check-updates-btn svg.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.sidebar.collapsed .check-updates-btn span {
+  display: none;
+}
+
+.sidebar.collapsed .check-updates-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  margin: var(--space-xs) auto;
+  border-radius: 50%;
+  justify-content: center;
+}
+
 /* Sessions Section */
 .sessions-section {
   flex: 1;

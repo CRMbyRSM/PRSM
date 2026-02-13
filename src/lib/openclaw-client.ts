@@ -230,6 +230,8 @@ export class OpenClawClient {
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private disposed = false
   private authenticated = false
 
   // Per-session stream tracking — allows concurrent agent conversations
@@ -331,20 +333,27 @@ export class OpenClawClient {
   }
 
   private attemptReconnect(): void {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+    if (this.disposed || this.reconnectAttempts >= this.maxReconnectAttempts) {
       return
     }
 
     this.reconnectAttempts++
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1)
 
-    setTimeout(() => {
-      this.connect().catch(() => {})
+    this.reconnectTimer = setTimeout(() => {
+      if (!this.disposed) {
+        this.connect().catch(() => {})
+      }
     }, delay)
   }
 
   disconnect(): void {
+    this.disposed = true
     this.maxReconnectAttempts = 0
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
     if (this.ws) {
       this.ws.onmessage = null
       this.ws.onclose = null

@@ -25,7 +25,26 @@ export function Sidebar() {
   } = useStore()
 
   const currentAgent = agents.find((a) => a.id === currentAgentId)
-  
+
+  // Session search filter
+  const [sessionFilter, setSessionFilter] = useState('')
+
+  // Check for Updates state
+  const [updateChecking, setUpdateChecking] = useState(false)
+  const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
+
+  const handleCheckForUpdates = async () => {
+    if (updateChecking) return
+    setUpdateChecking(true)
+    try {
+      await (window as any).electronAPI?.invoke('update:checkNow')
+    } catch {
+      // silently ignore — update:error event will fire if needed
+    } finally {
+      setTimeout(() => setUpdateChecking(false), 3000)
+    }
+  }
+
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, sessionId: string } | null>(null)
   const [showRenameModal, setShowRenameModal] = useState(false)
@@ -80,10 +99,37 @@ export function Sidebar() {
           <span>New Chat</span>
         </button>
 
+        <div className="session-search">
+          <svg className="session-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" />
+            <path d="M21 21l-4.35-4.35" />
+          </svg>
+          <input
+            type="text"
+            className="session-search-input"
+            placeholder="Search sessions…"
+            value={sessionFilter}
+            onChange={(e) => setSessionFilter(e.target.value)}
+          />
+          {sessionFilter && (
+            <button
+              className="session-search-clear"
+              onClick={() => setSessionFilter('')}
+              aria-label="Clear search"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+
         <div className="sessions-section">
           <h3 className="section-title">Sessions</h3>
           <div className="sessions-list">
-            {sessions.map((session) => (
+            {sessions.filter((s) =>
+              !sessionFilter || (s.title || '').toLowerCase().includes(sessionFilter.toLowerCase())
+            ).map((session) => (
               <div
                 key={session.id}
                 className={`session-item ${session.id === currentSessionId ? 'active' : ''}`}
@@ -146,6 +192,27 @@ export function Sidebar() {
             onOpenDetail={(agent) => selectAgentForDetail(agent)}
           />
         </div>
+
+        {/* Check for Updates — Electron only */}
+        {isElectron && (
+          <button
+            className="check-updates-btn"
+            onClick={handleCheckForUpdates}
+            disabled={updateChecking}
+          >
+            <svg
+              className={updateChecking ? 'spin' : ''}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m0 0a9 9 0 019-9m-9 9a9 9 0 009 9" />
+              <path d="M12 3v3m0 12v3" />
+            </svg>
+            <span>{updateChecking ? 'Checking…' : 'Check for Updates'}</span>
+          </button>
+        )}
 
         {/* Mobile close button */}
         <button
