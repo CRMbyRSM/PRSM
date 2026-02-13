@@ -813,10 +813,8 @@ export const useStore = create<AppState>()(
             get().stopSubagentPolling()
           })
 
-          client.on('certError', (payload: unknown) => {
-            const { httpsUrl } = payload as { url: string; httpsUrl: string }
-            get().showCertErrorModal(httpsUrl)
-          })
+          // certError event removed — WebSocket API cannot distinguish cert errors
+          // from other failures; the old detection produced false positives
 
           client.on('streamStart', (payload: unknown) => {
             const { sessionKey } = (payload || {}) as { sessionKey?: string }

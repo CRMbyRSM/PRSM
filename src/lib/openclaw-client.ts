@@ -302,20 +302,11 @@ export class OpenClawClient {
         }
 
         this.ws.onerror = (error) => {
-          if (this.url.startsWith('wss://') && this.ws?.readyState === WebSocket.CLOSED) {
-            try {
-              const urlObj = new URL(this.url)
-              const httpsUrl = `https://${urlObj.host}`
-              this.emit('certError', { url: this.url, httpsUrl })
-              reject(new Error(`Certificate error - visit ${httpsUrl} to accept the certificate`))
-              return
-            } catch {
-              // URL parsing failed, fall through
-            }
-          }
-
+          // WebSocket API does not expose SSL/cert details in onerror.
+          // Any wss:// failure (DNS, timeout, cert, Cloudflare tunnel, etc.)
+          // looks identical. Don't guess — just report a connection error.
           this.emit('error', error)
-          reject(new Error('WebSocket connection failed'))
+          reject(new Error(`WebSocket connection failed to ${this.url}`))
         }
 
         this.ws.onclose = () => {

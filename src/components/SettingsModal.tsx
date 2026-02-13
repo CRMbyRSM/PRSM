@@ -43,11 +43,23 @@ export function SettingsModal() {
     prevShowRef.current = showSettings
   }, [showSettings])
 
+  const normalizeUrl = (value: string): string => {
+    // Auto-convert http(s) to ws(s) for convenience
+    if (value.startsWith('https://')) return 'wss://' + value.slice(8)
+    if (value.startsWith('http://')) return 'ws://' + value.slice(7)
+    // If no protocol at all, assume wss:// for remote, ws:// for local
+    if (!value.startsWith('ws://') && !value.startsWith('wss://')) {
+      const isLocal = /^(localhost|127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(value)
+      return (isLocal ? 'ws://' : 'wss://') + value
+    }
+    return value
+  }
+
   const validateUrl = (value: string) => {
     try {
       const parsed = new URL(value)
       if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
-        return 'URL must start with ws:// or wss://'
+        return 'URL must start with ws://, wss://, http://, or https://'
       }
       return ''
     } catch {
@@ -60,13 +72,15 @@ export function SettingsModal() {
     // Read directly from DOM as fallback — Android WebView sometimes desyncs React state
     const urlInput = document.getElementById('serverUrl') as HTMLInputElement
     const tokenInput = document.getElementById('gatewayToken') as HTMLInputElement
-    const trimmedUrl = (urlInput?.value || url).trim()
+    const rawUrl = (urlInput?.value || url).trim()
     const trimmedToken = (tokenInput?.value || token).trim()
 
-    if (!trimmedUrl) {
+    if (!rawUrl) {
       setError('Server URL is required')
       return
     }
+
+    const trimmedUrl = normalizeUrl(rawUrl)
 
     const urlError = validateUrl(trimmedUrl)
     if (urlError) {
@@ -90,7 +104,8 @@ export function SettingsModal() {
       await connect()
       setShowSettings(false)
     } catch (err) {
-      setError('Connection failed. Check URL and token.')
+      const msg = err instanceof Error ? err.message : 'Connection failed'
+      setError(`${msg}. Check URL, token, and that the server is reachable.`)
     }
   }
 
@@ -126,10 +141,10 @@ export function SettingsModal() {
               id="serverUrl"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="wss://your-server.local"
+              placeholder="your-tunnel.example.com or wss://..."
               autoComplete="off"
             />
-            <span className="form-hint">WebSocket URL (e.g., wss://your-server.local or ws://localhost:8080)</span>
+            <span className="form-hint">Enter hostname, https://, or wss:// URL — auto-converts for you</span>
           </div>
 
           <div className="form-group">
