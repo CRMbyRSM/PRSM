@@ -300,14 +300,14 @@ export function ChatArea() {
                   thinkingEnabled={thinkingEnabled}
                 />
               </MessageErrorBoundary>
-              {msgToolCalls && msgToolCalls.length > 0 && (
+              {thinkingEnabled && msgToolCalls && msgToolCalls.length > 0 && (
                 <div className="tool-calls-container">
                   {msgToolCalls.map(tc => (
                     <ToolCallBlock key={tc.toolCallId} toolCall={tc} />
                   ))}
                 </div>
               )}
-              {msgSubagents && msgSubagents.length > 0 && (
+              {thinkingEnabled && msgSubagents && msgSubagents.length > 0 && (
                 <div className="subagents-container">
                   {msgSubagents.map(sa => (
                     <SubagentBlock key={sa.sessionKey} subagent={sa} onOpen={openSubagentPopout} />
@@ -319,14 +319,14 @@ export function ChatArea() {
         })}
 
         {/* Trailing tool calls / subagents not attached to a specific message */}
-        {toolCallsByMessageId.get('__trailing__') && (
+        {thinkingEnabled && toolCallsByMessageId.get('__trailing__') && (
           <div className="tool-calls-container">
             {toolCallsByMessageId.get('__trailing__')!.map(tc => (
               <ToolCallBlock key={tc.toolCallId} toolCall={tc} />
             ))}
           </div>
         )}
-        {subagentsByMessageId.get('__trailing__') && (
+        {thinkingEnabled && subagentsByMessageId.get('__trailing__') && (
           <div className="subagents-container">
             {subagentsByMessageId.get('__trailing__')!.map(sa => (
               <SubagentBlock key={sa.sessionKey} subagent={sa} onOpen={openSubagentPopout} />
