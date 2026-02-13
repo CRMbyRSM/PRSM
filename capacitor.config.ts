@@ -12,18 +12,18 @@ const config: CapacitorConfig = {
     SplashScreen: {
       launchShowDuration: 2000,
       launchAutoHide: true,
-      backgroundColor: '#06080a',
+      backgroundColor: '#07090c',
       showSpinner: false,
       androidScaleType: 'CENTER_CROP',
       splashImmersive: true
     },
     Keyboard: {
-      resize: 'body',
+      resize: 'native',
       resizeOnFullScreen: true
     },
     StatusBar: {
       style: 'DARK',
-      backgroundColor: '#06080a'
+      backgroundColor: '#07090c'
     }
   },
   ios: {
@@ -32,7 +32,7 @@ const config: CapacitorConfig = {
     preferredContentMode: 'mobile'
   },
   android: {
-    backgroundColor: '#06080a',
+    backgroundColor: '#07090c',
     allowMixedContent: true,
     captureInput: true,
     webContentsDebuggingEnabled: false

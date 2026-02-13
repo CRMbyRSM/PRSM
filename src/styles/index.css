@@ -170,6 +170,7 @@ html {
   font-size: 100%; /* scaled via JS from store.fontSize */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: var(--bg-deep); /* Prevents grey flash on mobile keyboard open/close */
 }
 
 body {
