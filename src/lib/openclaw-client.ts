@@ -87,6 +87,8 @@ export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  /** Raw content before thinking tag stripping — used during streaming accumulation */
+  rawContent?: string
   timestamp: string
   thinking?: string
   attachments?: MessageAttachment[]

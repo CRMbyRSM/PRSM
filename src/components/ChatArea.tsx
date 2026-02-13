@@ -144,6 +144,9 @@ export function ChatArea() {
   const activeSubagents = useStore((s) => s.activeSubagents)
   const thinkingEnabled = useStore((s) => s.thinkingEnabled)
   const openSubagentPopout = useStore((s) => s.openSubagentPopout)
+  const agentBusy = useStore((s) => s.agentBusy)
+  const messageQueue = useStore((s) => s.messageQueue)
+  const removeFromQueue = useStore((s) => s.removeFromQueue)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const isAutoScrollRef = useRef(true)
   const chatAreaRef = useRef<HTMLDivElement>(null)
@@ -328,6 +331,45 @@ export function ChatArea() {
             {subagentsByMessageId.get('__trailing__')!.map(sa => (
               <SubagentBlock key={sa.sessionKey} subagent={sa} onOpen={openSubagentPopout} />
             ))}
+          </div>
+        )}
+
+        {/* Queued messages */}
+        {messageQueue.length > 0 && (
+          <div className="queued-messages">
+            {messageQueue.map((qm) => (
+              <div key={qm.id} className="message user queued-message">
+                <div className="message-content">
+                  <div className="message-bubble queued-bubble">
+                    <span className="queued-badge">Queued</span>
+                    <button
+                      className="queued-cancel"
+                      onClick={() => removeFromQueue(qm.id)}
+                      aria-label="Cancel queued message"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 6L6 18M6 6l12 12" />
+                      </svg>
+                    </button>
+                    <p>{safe(qm.content)}</p>
+                  </div>
+                </div>
+                <div className="message-avatar user-avatar">
+                  <span>You</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Agent busy in another session banner */}
+        {agentBusy && !isStreaming && (
+          <div className="agent-busy-banner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 6v6l4 2" />
+            </svg>
+            <span>Agent is working in another session...</span>
           </div>
         )}
 

@@ -13,6 +13,7 @@ export function TopBar() {
     sessions,
     currentSessionId,
     connected,
+    agentBusy,
     setShowSettings,
     updateSessionLabel
   } = useStore()
@@ -90,8 +91,17 @@ export function TopBar() {
       </div>
 
       <div className="connection-status">
-        <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
-        <span className="status-text">{safe(connected ? 'Connected' : 'Disconnected')}</span>
+        {connected && agentBusy ? (
+          <>
+            <span className="status-dot busy" />
+            <span className="status-text">Working...</span>
+          </>
+        ) : (
+          <>
+            <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
+            <span className="status-text">{safe(connected ? 'Connected' : 'Disconnected')}</span>
+          </>
+        )}
       </div>
 
       <div className="top-bar-actions">

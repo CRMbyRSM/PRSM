@@ -994,6 +994,17 @@ a {
   background: var(--accent-red);
 }
 
+.status-dot.busy {
+  background: var(--accent-amber);
+  box-shadow: 0 0 8px var(--accent-amber);
+  animation: busyPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes busyPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--accent-amber); }
+  50% { opacity: 0.6; box-shadow: 0 0 12px var(--accent-amber); }
+}
+
 .top-bar-actions {
   display: flex;
   align-items: center;
@@ -1724,6 +1735,90 @@ a {
     opacity: 1;
     transform: scale(1);
   }
+}
+
+/* Agent Busy Banner */
+.agent-busy-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin: var(--space-sm) 0;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--accent-amber);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  animation: messageSlideIn 0.3s ease-out;
+}
+
+.agent-busy-banner svg {
+  flex-shrink: 0;
+  animation: spin 2s linear infinite;
+}
+
+/* Queued Messages */
+.queued-messages {
+  margin: var(--space-sm) 0;
+}
+
+.queued-message {
+  opacity: 0.6;
+}
+
+.queued-bubble {
+  position: relative;
+  background: var(--bg-hover) !important;
+  border-color: var(--border-subtle) !important;
+  border-style: dashed !important;
+}
+
+.queued-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-amber);
+  background: rgba(245, 158, 11, 0.12);
+  padding: 1px 8px;
+  border-radius: 8px;
+  margin-bottom: var(--space-xs);
+}
+
+.queued-cancel {
+  position: absolute;
+  top: var(--space-xs);
+  right: var(--space-xs);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--transition-fast);
+}
+
+.queued-bubble:hover .queued-cancel {
+  opacity: 1;
+}
+
+.queued-cancel:hover {
+  color: var(--accent-red);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.queued-cancel svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* ===== Input Area ===== */

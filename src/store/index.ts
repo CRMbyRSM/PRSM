@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile } from '../lib/openclaw-client'
+import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile, stripThinkingTags } from '../lib/openclaw-client'
 import * as Platform from '../lib/platform'
 import { deepSanitize } from '../lib/safe-render'
 
@@ -154,6 +154,11 @@ interface AppState {
   unpinMessage: (pinId: string) => void
   isPinned: (sessionId: string, messageId: string) => boolean
   getPinsForSession: (sessionId: string) => PinnedMessage[]
+
+  // Agent Busy & Message Queue
+  agentBusy: boolean
+  messageQueue: Array<{ id: string; content: string; timestamp: string; attachments?: Array<{type: string, mimeType: string, content: string}> }>
+  removeFromQueue: (id: string) => void
 
   // Tool Calls & Subagents
   activeToolCalls: ToolCall[]
@@ -526,6 +531,15 @@ export const useStore = create<AppState>()(
       skills: [],
       cronJobs: [],
 
+      // Agent Busy & Message Queue
+      agentBusy: false,
+      messageQueue: [],
+      removeFromQueue: (id) => {
+        set((state) => ({
+          messageQueue: state.messageQueue.filter((m) => m.id !== id)
+        }))
+      },
+
       // Pinned Messages
       pinnedMessages: [],
       pinMessage: (sessionId, message) => {
@@ -795,7 +809,7 @@ export const useStore = create<AppState>()(
           })
 
           client.on('disconnected', () => {
-            set({ connected: false, isStreaming: false, hadStreamChunks: false, activeToolCalls: [], streamingSessionId: null })
+            set({ connected: false, isStreaming: false, hadStreamChunks: false, activeToolCalls: [], streamingSessionId: null, agentBusy: false, messageQueue: [] })
             get().stopSubagentPolling()
           })
 
@@ -822,6 +836,7 @@ export const useStore = create<AppState>()(
               isStreaming: true,
               hadStreamChunks: false,
               activeToolCalls: [],
+              agentBusy: true,
               ...(sessionKey && !existingStream ? { streamingSessionId: sessionKey } : {})
             })
             get().startSubagentPolling()
@@ -859,19 +874,24 @@ export const useStore = create<AppState>()(
               // Only append to an active streaming placeholder — finalized messages
               // should not be extended (a new streaming message will be created instead).
               if (lastMessage && lastMessage.role === 'assistant' && lastMessage.id.startsWith('streaming-')) {
-                const nextContent = kind === 'replace'
+                const rawContent = kind === 'replace'
                   ? text
-                  : (lastMessage.content + text)
+                  : (lastMessage.rawContent ?? lastMessage.content) + text
 
-                const updatedMessage = { ...lastMessage, content: nextContent }
+                // Strip thinking tags from display content in real-time
+                const displayContent = stripThinkingTags(rawContent)
+
+                const updatedMessage = { ...lastMessage, content: displayContent, rawContent }
                 messages[messages.length - 1] = updatedMessage
                 return { messages, isStreaming: true, hadStreamChunks: true }
               } else {
                 // Create new assistant placeholder
+                const displayContent = stripThinkingTags(text)
                 const newMessage: Message = {
                   id: `streaming-${Date.now()}`,
                   role: 'assistant',
-                  content: text,
+                  content: displayContent,
+                  rawContent: text,
                   timestamp: new Date().toISOString()
                 }
                 return { messages: [...messages, newMessage], isStreaming: true, hadStreamChunks: true }
@@ -914,8 +934,19 @@ export const useStore = create<AppState>()(
               }
             }
 
-            set({ isStreaming: false, streamingSessionId: null, hadStreamChunks: false, activeToolCalls: [] })
+            set({ isStreaming: false, streamingSessionId: null, hadStreamChunks: false, activeToolCalls: [], agentBusy: false })
             get().stopSubagentPolling()
+
+            // Process queued messages
+            const { messageQueue } = get()
+            if (messageQueue.length > 0) {
+              const next = messageQueue[0]
+              set((state) => ({ messageQueue: state.messageQueue.slice(1) }))
+              // Defer send to next tick so state is settled
+              setTimeout(() => {
+                get().sendMessage(next.content, next.attachments).catch(() => {})
+              }, 100)
+            }
 
             // Refresh sessions after stream ends — gateway may have auto-generated a title
             setTimeout(() => {
@@ -984,6 +1015,24 @@ export const useStore = create<AppState>()(
             })
           })
 
+          // Agent presence/status — gateway broadcasts when the agent becomes busy or idle
+          client.on('agentStatus', (payload: unknown) => {
+            if (!payload || typeof payload !== 'object') return
+            const data = payload as any
+            // Handle various payload shapes from the gateway
+            let busy = false
+            if (data.status === 'busy' || data.status === 'working') {
+              busy = true
+            } else if (data.busy === true) {
+              busy = true
+            } else if (Array.isArray(data.presence)) {
+              busy = data.presence.some((p: any) => p.status === 'busy' || p.status === 'working')
+            } else if (data.status === 'idle' || data.status === 'online' || data.busy === false) {
+              busy = false
+            }
+            set({ agentBusy: busy })
+          })
+
           // Event-driven subagent detection: when the client's session filter
           // blocks an event from a different session, it emits this.
           client.on('subagentDetected', (payload: unknown) => {
@@ -1046,8 +1095,20 @@ export const useStore = create<AppState>()(
       },
 
       sendMessage: async (content: string, attachments?: Array<{type: string, mimeType: string, content: string}>) => {
-        const { client, currentSessionId, currentAgentId } = get()
+        const { client, currentSessionId, currentAgentId, isStreaming: currentlyStreaming } = get()
         if (!client || (!content.trim() && (!attachments || attachments.length === 0))) return
+
+        // Queue the message if agent is currently streaming a response
+        if (currentlyStreaming) {
+          const queueItem = {
+            id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            content,
+            timestamp: new Date().toISOString(),
+            attachments
+          }
+          set((state) => ({ messageQueue: [...state.messageQueue, queueItem] }))
+          return
+        }
 
         const selectedSessionId = currentSessionId
         const requestedSessionId = selectedSessionId || `session-${Date.now()}`
