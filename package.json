@@ -1,6 +1,6 @@
 {
   "name": "prsm",
-  "version": "1.9.38",
+  "version": "1.9.39",
   "description": "Desktop and mobile client for OpenClaw AI assistant",
   "main": "dist-electron/main.js",
   "author": "RSM Consulting",
@@ -129,7 +129,22 @@
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
     },
     "nsis": {
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "include": "build/installer.nsh",
+      "license": null,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PRSM",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     },
     "portable": {
       "artifactName": "${productName}-Portable-${version}.${ext}"
