@@ -315,6 +315,12 @@ export class OpenClawClient {
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
+      let settled = false
+      const onConnected = () => {
+        if (!settled) { settled = true; this.off('connected', onConnected); resolve() }
+      }
+      this.on('connected', onConnected)
+
       try {
         this.ws = new WebSocket(this.url)
 
@@ -327,21 +333,22 @@ export class OpenClawClient {
           // Any wss:// failure (DNS, timeout, cert, Cloudflare tunnel, etc.)
           // looks identical. Don't guess — just report a connection error.
           this.emit('error', error)
-          reject(new Error(`WebSocket connection failed to ${this.url}`))
+          if (!settled) { settled = true; this.off('connected', onConnected); reject(new Error(`WebSocket connection failed to ${this.url}`)) }
         }
 
         this.ws.onclose = () => {
           this.authenticated = false
           this.resetStreamState()
           this.emit('disconnected')
+          if (!settled) { settled = true; this.off('connected', onConnected); reject(new Error('Connection closed before handshake')) }
           this.attemptReconnect()
         }
 
         this.ws.onmessage = (event) => {
-          this.handleMessage(event.data, resolve, reject)
+          this.handleMessage(event.data)
         }
       } catch (error) {
-        reject(error)
+        if (!settled) { settled = true; reject(error) }
       }
     })
   }
@@ -380,29 +387,30 @@ export class OpenClawClient {
   }
 
   private async performHandshake(_nonce?: string): Promise<void> {
-    const id = (++this.requestId).toString()
-    const connectMsg: RequestFrame = {
-      type: 'req',
-      id,
-      method: 'connect',
-      params: {
+    // Use the standard call() pattern so the response is handled via pendingRequests
+    try {
+      const result = await this.call<any>('connect', {
         minProtocol: 3,
         maxProtocol: 3,
         role: 'operator',
+        scopes: ['operator.admin', 'operator.approvals', 'operator.pairing'],
+        caps: [],
         client: {
-          id: 'gateway-client',
+          id: 'prsm-desktop',
           displayName: 'PRSM',
           version: __APP_VERSION__,
-          platform: 'web',
-          mode: 'backend'
+          platform: typeof navigator !== 'undefined' ? navigator.platform || 'desktop' : 'desktop',
+          mode: 'webchat'
         },
         auth: this.token
             ? (this.authMode === 'password' ? { password: this.token } : { token: this.token })
             : undefined
-      }
+      })
+      this.authenticated = true
+      this.emit('connected', result)
+    } catch (err) {
+      throw err
     }
-
-    this.ws?.send(JSON.stringify(connectMsg))
   }
 
   // ── RPC ────────────────────────────────────────────────────────
@@ -437,7 +445,7 @@ export class OpenClawClient {
     })
   }
 
-  private handleMessage(data: string, resolve?: () => void, reject?: (err: Error) => void): void {
+  private handleMessage(data: string): void {
     try {
       const message = JSON.parse(data)
 
@@ -446,7 +454,7 @@ export class OpenClawClient {
 
         if (eventFrame.event === 'connect.challenge') {
           this.performHandshake(eventFrame.payload?.nonce).catch((err) => {
-            reject?.(err)
+            this.emit('error', err)
           })
           return
         }
@@ -459,13 +467,6 @@ export class OpenClawClient {
         const resFrame = message as ResponseFrame
         const pending = this.pendingRequests.get(resFrame.id)
 
-        if (!this.authenticated && resFrame.ok && resFrame.payload?.type === 'hello-ok') {
-          this.authenticated = true
-          this.emit('connected', resFrame.payload)
-          resolve?.()
-          return
-        }
-
         if (pending) {
           this.pendingRequests.delete(resFrame.id)
           if (resFrame.ok) {
@@ -474,9 +475,6 @@ export class OpenClawClient {
             const errorMsg = resFrame.error?.message || 'Unknown error'
             pending.reject(new Error(errorMsg))
           }
-        } else if (!resFrame.ok && !this.authenticated) {
-          const errorMsg = resFrame.error?.message || 'Handshake failed'
-          reject?.(new Error(errorMsg))
         }
         return
       }
