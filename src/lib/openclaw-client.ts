@@ -254,6 +254,7 @@ export class OpenClawClient {
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private connectTimer: ReturnType<typeof setTimeout> | null = null
   private disposed = false
   private authenticated = false
 
@@ -326,19 +327,27 @@ export class OpenClawClient {
 
         this.ws.onopen = () => {
           this.reconnectAttempts = 0
+          // Match webchat: queue a connect attempt after 750ms in case
+          // the gateway doesn't send connect.challenge (newer gateways may not)
+          this.connectTimer = window.setTimeout(() => {
+            if (!this.authenticated) {
+              this.performHandshake().catch((err) => {
+                this.emit('error', err)
+              })
+            }
+          }, 750)
         }
 
         this.ws.onerror = (error) => {
-          // WebSocket API does not expose SSL/cert details in onerror.
-          // Any wss:// failure (DNS, timeout, cert, Cloudflare tunnel, etc.)
-          // looks identical. Don't guess — just report a connection error.
           this.emit('error', error)
           if (!settled) { settled = true; this.off('connected', onConnected); reject(new Error(`WebSocket connection failed to ${this.url}`)) }
         }
 
         this.ws.onclose = () => {
           this.authenticated = false
+          this.handshakeSent = false
           this.resetStreamState()
+          if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null }
           this.emit('disconnected')
           if (!settled) { settled = true; this.off('connected', onConnected); reject(new Error('Connection closed before handshake')) }
           this.attemptReconnect()
@@ -386,7 +395,12 @@ export class OpenClawClient {
     this.resetStreamState()
   }
 
+  private handshakeSent = false
+
   private async performHandshake(_nonce?: string): Promise<void> {
+    if (this.handshakeSent) return // Prevent double-send from timer + challenge race
+    this.handshakeSent = true
+
     // Use the standard call() pattern so the response is handled via pendingRequests
     try {
       const result = await this.call<any>('connect', {
@@ -453,6 +467,8 @@ export class OpenClawClient {
         const eventFrame = message as EventFrame
 
         if (eventFrame.event === 'connect.challenge') {
+          // Cancel the fallback timer — challenge arrived, send connect immediately
+          if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null }
           this.performHandshake(eventFrame.payload?.nonce).catch((err) => {
             this.emit('error', err)
           })
