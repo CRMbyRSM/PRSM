@@ -11,6 +11,7 @@ interface Attachment {
 
 export function InputArea() {
   const [message, setMessage] = useState('')
+  const [isComposing, setIsComposing] = useState(false)
   const isComposingRef = useRef(false)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
@@ -292,13 +293,20 @@ export function InputArea() {
     }
   }
 
-  // Android IME / swipe-typing: let the DOM own the value during composition
-  // so swiped words render immediately instead of waiting for the next input
-  const handleCompositionStart = () => { isComposingRef.current = true }
+  // Android IME / swipe-typing: make textarea uncontrolled during composition
+  // so React doesn't fight the IME by overwriting DOM value mid-swipe
+  const handleCompositionStart = () => {
+    isComposingRef.current = true
+    setIsComposing(true)
+  }
   const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
     isComposingRef.current = false
+    setIsComposing(false)
     // Sync the final composed value into React state
-    setMessage((e.target as HTMLTextAreaElement).value)
+    const val = (e.target as HTMLTextAreaElement).value
+    if (val.length <= maxLength) {
+      setMessage(val)
+    }
   }
 
   const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -465,7 +473,7 @@ export function InputArea() {
         {!isRecording ? (
           <textarea
             ref={textareaRef}
-            value={message}
+            {...(isComposing ? {} : { value: message })}
             onChange={handleChange}
             onCompositionStart={handleCompositionStart}
             onCompositionEnd={handleCompositionEnd}
