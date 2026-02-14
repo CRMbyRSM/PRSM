@@ -905,7 +905,12 @@ export class OpenClawClient {
             contentUpper.includes('READ HEARTBEAT.MD') ||
             content.includes('# HEARTBEAT - Event-Driven Status')
 
-          if ((!content && !thinking) || isHeartbeat) return null
+          // Filter system events (gateway restarts, exec completions, etc.)
+          const isSystemEvent =
+            /^\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(content) &&
+            /(?:GatewayRestart|Exec completed|config-apply|SIGUSR)/i.test(content)
+
+          if ((!content && !thinking) || isHeartbeat || isSystemEvent) return null
 
           const finalContent = stripThinkingTags(typeof content === 'string' ? stripAnsi(content) : String(content || ''))
           const finalThinking = thinking ? stripAnsi(typeof thinking === 'string' ? thinking : JSON.stringify(thinking)) : undefined

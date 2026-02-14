@@ -753,10 +753,18 @@ export const useStore = create<AppState>()(
             const { currentSessionId } = get()
             if (currentSessionId && (!msgSessionKey || msgSessionKey !== currentSessionId)) return
 
+            // Drop system messages — gateway restart notifications, exec completions, etc.
+            const rawRole = String((message as any).role || '').toLowerCase()
+            if (rawRole === 'system') return
+
+            // Also filter by content pattern — some system events arrive as assistant role
+            const sysContent = typeof message.content === 'string' ? message.content : ''
+            if (/^\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(sysContent) &&
+                /(?:GatewayRestart|Exec completed|config-apply|SIGUSR)/i.test(sysContent)) return
+
             // Drop tool results when thinking toggle is off (matches webchat behavior).
             // Check both the tagged isToolResult flag AND the raw role from the server,
             // since the gateway sends tool results with role="toolresult" or "tool_result".
-            const rawRole = String((message as any).role || '').toLowerCase()
             const isTool = message.isToolResult
               || rawRole === 'tool' || rawRole === 'toolresult' || rawRole === 'tool_result' || rawRole === 'function'
               || !!(message as any).toolCallId || !!(message as any).tool_call_id
