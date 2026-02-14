@@ -11,6 +11,7 @@ interface Attachment {
 
 export function InputArea() {
   const [message, setMessage] = useState('')
+  const isComposingRef = useRef(false)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -291,6 +292,15 @@ export function InputArea() {
     }
   }
 
+  // Android IME / swipe-typing: let the DOM own the value during composition
+  // so swiped words render immediately instead of waiting for the next input
+  const handleCompositionStart = () => { isComposingRef.current = true }
+  const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement>) => {
+    isComposingRef.current = false
+    // Sync the final composed value into React state
+    setMessage((e.target as HTMLTextAreaElement).value)
+  }
+
   const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items
     if (!items) return
@@ -457,6 +467,8 @@ export function InputArea() {
             ref={textareaRef}
             value={message}
             onChange={handleChange}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={connected ? (isTranscribing ? "Transcribing..." : "Type a message...") : "Connecting..."}
