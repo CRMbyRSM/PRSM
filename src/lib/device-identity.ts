@@ -16,7 +16,7 @@ interface StoredIdentity {
   createdAtMs: number
 }
 
-interface DeviceIdentity {
+export interface DeviceIdentity {
   deviceId: string
   publicKey: string   // base64url
   privateKey: string  // base64url

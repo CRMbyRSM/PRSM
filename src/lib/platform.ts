@@ -6,6 +6,7 @@ import { Preferences } from '@capacitor/preferences'
 import { Browser } from '@capacitor/browser'
 import { StatusBar, Style } from '@capacitor/status-bar'
 import { Keyboard } from '@capacitor/keyboard'
+import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { App } from '@capacitor/app'
 import { LocalNotifications } from '@capacitor/local-notifications'
 
@@ -97,6 +98,22 @@ export async function trustHost(hostname: string): Promise<{ trusted: boolean; h
   }
   // On mobile/web, certificate trust is handled by the OS
   return { trusted: false, hostname }
+}
+
+// Haptic feedback (mobile only)
+const HAPTIC_STYLES = {
+  light: ImpactStyle.Light,
+  medium: ImpactStyle.Medium,
+  heavy: ImpactStyle.Heavy,
+} as const
+
+export async function triggerHaptic(style: 'light' | 'medium' | 'heavy' = 'medium'): Promise<void> {
+  if (!isNativeMobile()) return
+  try {
+    await Haptics.impact({ style: HAPTIC_STYLES[style] })
+  } catch {
+    // Haptics not available
+  }
 }
 
 // Status bar management (mobile only)
@@ -335,4 +352,75 @@ export function setupAppVisibilityTracking(): () => void {
   return () => {
     document.removeEventListener('visibilitychange', handler)
   }
+}
+
+// Subagent popout window
+export interface SubagentPopoutParams {
+  sessionKey: string
+  serverUrl: string
+  authToken: string
+  authMode: string
+  label: string
+}
+
+export async function openSubagentPopout(params: SubagentPopoutParams): Promise<void> {
+  const platform = getPlatform()
+
+  if (platform === 'electron' && (window as any).electronAPI?.openSubagentPopout) {
+    await (window as any).electronAPI.openSubagentPopout(params)
+    return
+  }
+
+  // Fallback for web/mobile: open in new tab with hash params
+  const hash = `#subagent?sessionKey=${encodeURIComponent(params.sessionKey)}&serverUrl=${encodeURIComponent(params.serverUrl)}&authToken=${encodeURIComponent(params.authToken)}&authMode=${encodeURIComponent(params.authMode)}`
+  window.open(`${window.location.origin}${window.location.pathname}${hash}`, '_blank')
+}
+
+// Tool call popout window
+export interface ToolCallPopoutParams {
+  toolCallId: string
+  name: string
+}
+
+export async function openToolCallPopout(params: ToolCallPopoutParams): Promise<void> {
+  const platform = getPlatform()
+
+  if (platform === 'electron' && (window as any).electronAPI?.openToolCallPopout) {
+    await (window as any).electronAPI.openToolCallPopout(params)
+    return
+  }
+
+  // Fallback for web/mobile: open in new tab with hash params
+  const hash = `#toolcall?id=${encodeURIComponent(params.toolCallId)}`
+  window.open(`${window.location.origin}${window.location.pathname}${hash}`, '_blank')
+}
+
+// Download and install a ClawHub skill to a target directory (Electron only)
+export async function clawhubInstall(slug: string, targetDir: string): Promise<string[]> {
+  const platform = getPlatform()
+
+  if (platform === 'electron' && (window as any).electronAPI?.clawhubInstall) {
+    const result = await (window as any).electronAPI.clawhubInstall(slug, targetDir)
+    return result.files || []
+  }
+
+  throw new Error('Skill install is only supported in the desktop app')
+}
+
+// CORS-safe fetch (proxied through Electron main process, direct fetch elsewhere)
+export async function corsFetch(url: string, options?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<string> {
+  const platform = getPlatform()
+
+  if (platform === 'electron' && (window as any).electronAPI?.fetchUrl) {
+    return await (window as any).electronAPI.fetchUrl(url, options)
+  }
+
+  // Fallback: direct fetch (works on mobile / web if CORS is allowed)
+  const res = await fetch(url, {
+    method: options?.method,
+    headers: options?.headers,
+    body: options?.body
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return await res.text()
 }

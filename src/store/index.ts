@@ -1,14 +1,21 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile, stripThinkingTags, isToolResultMessage } from '../lib/openclaw-client'
+import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile, stripThinkingTags, CreateAgentParams, buildIdentityContent } from '../lib/openclaw'
+import { isToolResultMessage } from '../lib/openclaw/utils'
+import type { ClawHubSkill, ClawHubSort } from '../lib/clawhub'
+import { listClawHubSkills, searchClawHub, getClawHubSkill, getClawHubSkillVersion, getClawHubSkillConvex } from '../lib/clawhub'
 import * as Platform from '../lib/platform'
 import { deepSanitize } from '../lib/safe-render'
+
+// Cache for ClawHub stats (downloads/stars) to enrich search results
+const _clawHubStatsCache = new Map<string, { downloads: number; stars: number }>()
 
 export interface ToolCall {
   toolCallId: string
   name: string
   phase: 'start' | 'result'
   result?: string
+  args?: Record<string, unknown>
   afterMessageId?: string
   startedAt: number
 }
@@ -74,10 +81,12 @@ interface AppState {
   setRightPanelOpen: (open: boolean) => void
   rightPanelTab: 'skills' | 'crons' | 'pins'
   setRightPanelTab: (tab: 'skills' | 'crons' | 'pins') => void
+  collapsedSessionGroups: string[]
+  toggleSessionGroup: (label: string) => void
 
   // Main View State
-  mainView: 'chat' | 'skill-detail' | 'cron-detail' | 'agent-detail'
-  setMainView: (view: 'chat' | 'skill-detail' | 'cron-detail' | 'agent-detail') => void
+  mainView: 'chat' | 'skill-detail' | 'cron-detail' | 'agent-detail' | 'create-agent' | 'clawhub-skill-detail' | 'server-settings' | 'pixel-dashboard'
+  setMainView: (view: AppState['mainView']) => void
   selectedSkill: Skill | null
   selectedCronJob: CronJob | null
   selectedAgentDetail: AgentDetail | null
@@ -85,6 +94,11 @@ interface AppState {
   selectCronJob: (cronJob: CronJob) => Promise<void>
   selectAgentForDetail: (agent: Agent) => Promise<void>
   closeDetailView: () => void
+  openServerSettings: () => void
+  openDashboard: () => void
+  showCreateAgent: () => void
+  createAgent: (params: CreateAgentParams) => Promise<{ success: boolean; error?: string }>
+  deleteAgent: (agentId: string) => Promise<{ success: boolean; error?: string }>
   toggleSkillEnabled: (skillId: string, enabled: boolean) => Promise<void>
   saveAgentFile: (agentId: string, fileName: string, content: string) => Promise<boolean>
   refreshAgentFiles: (agentId: string) => Promise<void>
@@ -148,6 +162,23 @@ interface AppState {
   skills: Skill[]
   cronJobs: CronJob[]
 
+  // ClawHub
+  clawHubSkills: ClawHubSkill[]
+  clawHubLoading: boolean
+  clawHubSearchQuery: string
+  clawHubSort: ClawHubSort
+  selectedClawHubSkill: ClawHubSkill | null
+  skillsSubTab: 'installed' | 'available'
+  installingHubSkill: string | null
+  installHubSkillError: string | null
+  setSkillsSubTab: (tab: 'installed' | 'available') => void
+  fetchClawHubSkills: () => Promise<void>
+  searchClawHubSkills: (query: string) => Promise<void>
+  setClawHubSort: (sort: ClawHubSort) => void
+  selectClawHubSkill: (skill: ClawHubSkill) => void
+  installClawHubSkill: (slug: string) => Promise<void>
+  fetchClawHubSkillDetail: (slug: string) => Promise<void>
+
   // Pinned Messages (local-only, persisted)
   pinnedMessages: PinnedMessage[]
   pinMessage: (sessionId: string, message: Message) => void
@@ -165,6 +196,7 @@ interface AppState {
   activeSubagents: SubagentInfo[]
   abortChat: () => Promise<void>
   openSubagentPopout: (sessionKey: string) => void
+  openToolCallPopout: (toolCallId: string) => void
   startSubagentPolling: () => void
   stopSubagentPolling: () => void
 
@@ -248,6 +280,15 @@ export const useStore = create<AppState>()(
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
       sidebarCollapsed: false,
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+      collapsedSessionGroups: [],
+      toggleSessionGroup: (label) => set((state) => {
+        const groups = state.collapsedSessionGroups
+        return {
+          collapsedSessionGroups: groups.includes(label)
+            ? groups.filter(g => g !== label)
+            : [...groups, label]
+        }
+      }),
       rightPanelOpen: !Platform.isMobile(),
       setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
       rightPanelTab: 'skills',
@@ -306,7 +347,139 @@ export const useStore = create<AppState>()(
           }
         }
       },
-      closeDetailView: () => set({ mainView: 'chat', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null }),
+      closeDetailView: () => set({ mainView: 'chat', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
+      openServerSettings: () => set({ mainView: 'server-settings', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
+      openDashboard: () => set({ mainView: 'pixel-dashboard', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
+      showCreateAgent: () => set({ mainView: 'create-agent', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
+      createAgent: async (params) => {
+        const { client } = get()
+        if (!client) return { success: false, error: 'Not connected' }
+
+        try {
+          const result = await client.createAgent({
+            name: params.name,
+            workspace: params.workspace,
+            model: params.model
+          })
+
+          if (!result?.ok) {
+            return { success: false, error: 'Server returned an error' }
+          }
+
+          const agentId = result.agentId
+          const needsIdentity = params.name || params.emoji || params.avatar
+
+          // Wait for reconnect after config.patch triggers server restart
+          await new Promise<void>((resolve) => {
+            let resolved = false
+            const onConnected = () => {
+              if (resolved) return
+              resolved = true
+              client.off('connected', onConnected)
+              resolve()
+            }
+            client.on('connected', onConnected)
+            setTimeout(() => {
+              if (!resolved) {
+                resolved = true
+                client.off('connected', onConnected)
+                resolve()
+              }
+            }, 15000)
+          })
+
+          // Write IDENTITY.md
+          if (needsIdentity) {
+            const content = buildIdentityContent({
+              name: params.name,
+              emoji: params.emoji,
+              avatar: params.avatar,
+              agentId,
+              avatarFileName: params.avatarFileName
+            })
+            try {
+              await client.setAgentFile(agentId, 'IDENTITY.md', content)
+            } catch {
+              // Failed to write IDENTITY.md
+            }
+
+            if (params.avatar && params.avatarFileName && params.avatar.startsWith('data:')) {
+              try {
+                const base64Content = params.avatar.replace(/^data:[^;]+;base64,/, '')
+                const avatarPath = `avatars/${agentId}/${params.avatarFileName}`
+                await client.setAgentFile(agentId, avatarPath, base64Content)
+              } catch {
+                // Failed to write avatar file
+              }
+            }
+          }
+
+          await get().fetchAgents()
+
+          const newAgent = get().agents.find(a => a.id === agentId)
+          if (newAgent) {
+            set({ currentAgentId: agentId })
+            await get().selectAgentForDetail(newAgent)
+          } else {
+            set({ mainView: 'chat' })
+          }
+
+          return { success: true }
+        } catch (err: any) {
+          return { success: false, error: err?.message || 'Failed to create agent' }
+        }
+      },
+
+      deleteAgent: async (agentId) => {
+        const { client } = get()
+        if (!client) return { success: false, error: 'Not connected' }
+
+        try {
+          const result = await client.deleteAgent(agentId)
+          if (!result?.ok) {
+            return { success: false, error: 'Server returned an error' }
+          }
+
+          // Wait for reconnect after config.patch triggers server restart
+          await new Promise<void>((resolve) => {
+            let resolved = false
+            const onConnected = () => {
+              if (resolved) return
+              resolved = true
+              client.off('connected', onConnected)
+              resolve()
+            }
+            client.on('connected', onConnected)
+            setTimeout(() => {
+              if (!resolved) {
+                resolved = true
+                client.off('connected', onConnected)
+                resolve()
+              }
+            }, 15000)
+          })
+
+          const { currentAgentId, mainView, selectedAgentDetail } = get()
+          if (currentAgentId === agentId) {
+            set({ currentAgentId: 'main' })
+          }
+
+          if (mainView === 'agent-detail' && selectedAgentDetail?.agent.id === agentId) {
+            set({ mainView: 'chat', selectedAgentDetail: null })
+          }
+
+          await get().fetchAgents()
+
+          const { agents, currentAgentId: newAgentId } = get()
+          if (newAgentId === agentId || !agents.some(a => a.id === newAgentId)) {
+            set({ currentAgentId: agents[0]?.id || 'main' })
+          }
+
+          return { success: true }
+        } catch (err: any) {
+          return { success: false, error: err?.message || 'Failed to delete agent' }
+        }
+      },
       toggleSkillEnabled: async (skillId, enabled) => {
         const { client } = get()
         if (!client) return
@@ -437,7 +610,7 @@ export const useStore = create<AppState>()(
         // If re-selecting the current session, just ensure we're in chat view
         if (sessionId === currentSessionId) {
           if (mainView !== 'chat') {
-            set({ mainView: 'chat', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null })
+            set({ mainView: 'chat', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null })
           }
           return
         }
@@ -456,13 +629,14 @@ export const useStore = create<AppState>()(
           mainView: 'chat',
           selectedSkill: null,
           selectedCronJob: null,
-          selectedAgentDetail: null
+          selectedAgentDetail: null,
+          selectedClawHubSkill: null
         })
         // Load session messages
-        get().client?.getSessionMessages(sessionId).then((messages) => {
+        get().client?.getSessionMessages(sessionId).then((result) => {
           // Only apply if we're still on this session (prevent stale overwrites)
           if (get().currentSessionId === sessionId) {
-            set({ messages: deepSanitize(messages) })
+            set({ messages: deepSanitize(result.messages) })
           }
         })
       },
@@ -516,9 +690,9 @@ export const useStore = create<AppState>()(
         }))
 
         // Load any existing messages for the spawned session
-        const messages = await client.getSessionMessages(session.id)
-        if (messages.length > 0) {
-          set({ messages: deepSanitize(messages) })
+        const result = await client.getSessionMessages(session.id)
+        if (result.messages.length > 0) {
+          set({ messages: deepSanitize(result.messages) })
         }
       },
 
@@ -530,6 +704,135 @@ export const useStore = create<AppState>()(
       // Skills & Crons
       skills: [],
       cronJobs: [],
+
+      // ClawHub
+      clawHubSkills: [],
+      clawHubLoading: false,
+      clawHubSearchQuery: '',
+      clawHubSort: 'downloads' as ClawHubSort,
+      selectedClawHubSkill: null,
+      skillsSubTab: 'installed' as const,
+      installingHubSkill: null,
+      installHubSkillError: null,
+      setSkillsSubTab: (tab: 'installed' | 'available') => {
+        set({ skillsSubTab: tab })
+        if (tab === 'available' && get().clawHubSkills.length === 0 && !get().clawHubLoading) {
+          get().fetchClawHubSkills()
+        }
+      },
+      fetchClawHubSkills: async () => {
+        set({ clawHubLoading: true })
+        try {
+          const skills = await listClawHubSkills(get().clawHubSort)
+          for (const s of skills) {
+            _clawHubStatsCache.set(s.slug, { downloads: s.downloads, stars: s.stars })
+          }
+          set({ clawHubSkills: skills })
+        } catch {
+          // fetch failed
+        }
+        set({ clawHubLoading: false })
+      },
+      searchClawHubSkills: async (query: string) => {
+        set({ clawHubSearchQuery: query, clawHubLoading: true })
+        try {
+          let skills = query.trim()
+            ? await searchClawHub(query)
+            : await listClawHubSkills(get().clawHubSort)
+          skills = skills.map(s => {
+            const cached = _clawHubStatsCache.get(s.slug)
+            if (cached && s.downloads === 0 && s.stars === 0) {
+              return { ...s, downloads: cached.downloads, stars: cached.stars }
+            }
+            if (s.downloads > 0 || s.stars > 0) {
+              _clawHubStatsCache.set(s.slug, { downloads: s.downloads, stars: s.stars })
+            }
+            return s
+          })
+          set({ clawHubSkills: skills })
+        } catch {
+          // search failed
+        }
+        set({ clawHubLoading: false })
+      },
+      setClawHubSort: (sort: ClawHubSort) => {
+        set({ clawHubSort: sort })
+        get().fetchClawHubSkills()
+      },
+      selectClawHubSkill: (skill: ClawHubSkill) => {
+        set({ mainView: 'clawhub-skill-detail', selectedClawHubSkill: skill, selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null })
+      },
+      installClawHubSkill: async (slug: string) => {
+        set({ installingHubSkill: slug, installHubSkillError: null })
+
+        const { client, currentSessionId } = get()
+        if (!client) {
+          set({ installHubSkillError: 'Not connected to server', installingHubSkill: null })
+          return
+        }
+
+        try {
+          await client.installHubSkill(slug, currentSessionId || undefined)
+
+          const maxAttempts = 24
+          const pollInterval = 5000
+          for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(r => setTimeout(r, pollInterval))
+            if (get().installingHubSkill !== slug) return
+            await get().fetchSkills()
+            const installed = get().skills.some(s => {
+              const sl = slug.toLowerCase()
+              if (s.name.toLowerCase() === sl || s.id.toLowerCase() === sl) return true
+              if (s.filePath) {
+                const parts = s.filePath.replace(/\\/g, '/').split('/')
+                const idx = parts.lastIndexOf('skills')
+                if (idx >= 0 && idx + 1 < parts.length && parts[idx + 1].toLowerCase() === sl) return true
+              }
+              return false
+            })
+            if (installed) {
+              set({ installingHubSkill: null })
+              return
+            }
+          }
+          set({ installingHubSkill: null, installHubSkillError: 'Install may still be running — check the chat for output' })
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Install failed'
+          console.error('[clawhub] Install failed:', msg)
+          set({ installHubSkillError: msg, installingHubSkill: null })
+        }
+      },
+      fetchClawHubSkillDetail: async (slug: string) => {
+        try {
+          const [detail, convexData] = await Promise.all([
+            getClawHubSkill(slug),
+            getClawHubSkillConvex(slug)
+          ])
+          if (detail && get().selectedClawHubSkill?.slug === slug) {
+            if (convexData?.vtAnalysis) {
+              detail.vtAnalysis = convexData.vtAnalysis
+            }
+            set({ selectedClawHubSkill: detail })
+            if (detail.downloads > 0 || detail.stars > 0) {
+              _clawHubStatsCache.set(slug, { downloads: detail.downloads, stars: detail.stars })
+            }
+            if (detail.version) {
+              const versionInfo = await getClawHubSkillVersion(slug, detail.version)
+              if (versionInfo && get().selectedClawHubSkill?.slug === slug) {
+                set((state) => ({
+                  selectedClawHubSkill: state.selectedClawHubSkill ? {
+                    ...state.selectedClawHubSkill,
+                    changelog: versionInfo.changelog,
+                    versionFiles: versionInfo.files
+                  } : null
+                }))
+              }
+            }
+          }
+        } catch {
+          // detail fetch failed - keep the list data
+        }
+      },
 
       // Agent Busy & Message Queue
       agentBusy: false,
@@ -585,8 +888,26 @@ export const useStore = create<AppState>()(
         get().stopSubagentPolling()
       },
       openSubagentPopout: (sessionKey: string) => {
-        // Switch to the subagent session in the sidebar
-        get().setCurrentSession(sessionKey)
+        const { serverUrl, gatewayToken, authMode, activeSubagents } = get()
+        const subagent = activeSubagents.find(a => a.sessionKey === sessionKey)
+        Platform.openSubagentPopout({
+          sessionKey,
+          serverUrl,
+          authToken: gatewayToken,
+          authMode,
+          label: subagent?.label || sessionKey
+        })
+      },
+      openToolCallPopout: (toolCallId: string) => {
+        const { activeToolCalls } = get()
+        const toolCall = activeToolCalls.find(t => t.toolCallId === toolCallId)
+        if (!toolCall) return
+
+        try {
+          localStorage.setItem(`toolcall-${toolCallId}`, JSON.stringify(toolCall))
+        } catch { /* storage full — ignore */ }
+
+        Platform.openToolCallPopout({ toolCallId, name: toolCall.name })
       },
       startSubagentPolling: () => {
         const { client, sessions } = get()
@@ -1014,7 +1335,7 @@ export const useStore = create<AppState>()(
           })
 
           client.on('toolCall', (payload: unknown) => {
-            const tc = payload as { toolCallId: string; name: string; phase: string; result?: string; sessionKey?: string }
+            const tc = payload as { toolCallId: string; name: string; phase: string; result?: string; args?: Record<string, unknown>; sessionKey?: string }
             const { currentSessionId: csid } = get()
             if (csid && (!tc.sessionKey || tc.sessionKey !== csid)) return
 
@@ -1022,7 +1343,13 @@ export const useStore = create<AppState>()(
               const idx = state.activeToolCalls.findIndex(t => t.toolCallId === tc.toolCallId)
               if (idx >= 0) {
                 const updated = [...state.activeToolCalls]
-                updated[idx] = { ...updated[idx], phase: tc.phase as 'start' | 'result', result: tc.result }
+                updated[idx] = {
+                  ...updated[idx],
+                  phase: tc.phase as 'start' | 'result',
+                  result: tc.result,
+                  // Preserve args from start phase; merge if provided on result
+                  args: tc.args || updated[idx].args
+                }
                 return { activeToolCalls: updated }
               }
 
@@ -1036,6 +1363,7 @@ export const useStore = create<AppState>()(
                   name: tc.name,
                   phase: tc.phase as 'start' | 'result',
                   result: tc.result,
+                  args: tc.args,
                   afterMessageId: finalizedId || undefined,
                   startedAt: Date.now()
                 }]
@@ -1102,9 +1430,9 @@ export const useStore = create<AppState>()(
             const topSession = loadedSessions[0]
             set({ currentSessionId: topSession.id })
             client.setPrimarySessionKey(topSession.id)
-            client.getSessionMessages(topSession.id).then((messages) => {
+            client.getSessionMessages(topSession.id).then((result) => {
               if (get().currentSessionId === topSession.id) {
-                set({ messages: deepSanitize(messages) })
+                set({ messages: deepSanitize(result.messages) })
               }
             })
           }

@@ -11,6 +11,11 @@ import { CertErrorModal } from './components/CertErrorModal'
 import { SkillDetailView } from './components/SkillDetailView'
 import { CronJobDetailView } from './components/CronJobDetailView'
 import { AgentDetailView } from './components/AgentDetailView'
+import { CreateAgentView } from './components/CreateAgentView'
+import { ClawHubSkillDetailView } from './components/ClawHubSkillDetailView'
+import { ServerSettingsView } from './components/ServerSettingsView'
+import { AgentDashboard } from './components/AgentDashboard'
+import { MobileGestureLayer } from './components/MobileGestureLayer'
 import {
   isNativeMobile,
   setStatusBarStyle,
@@ -89,7 +94,7 @@ function App() {
     }
   }, [])
 
-  return (
+  const content = (
     <div className="app">
       <Sidebar />
 
@@ -105,6 +110,10 @@ function App() {
         {mainView === 'skill-detail' && <SkillDetailView />}
         {mainView === 'cron-detail' && <CronJobDetailView />}
         {mainView === 'agent-detail' && <AgentDetailView />}
+        {mainView === 'create-agent' && <CreateAgentView />}
+        {mainView === 'clawhub-skill-detail' && <ClawHubSkillDetailView />}
+        {mainView === 'server-settings' && <ServerSettingsView />}
+        {mainView === 'pixel-dashboard' && <AgentDashboard />}
       </main>
 
       <RightPanel />
@@ -125,6 +134,10 @@ function App() {
       <CertErrorModal />
     </div>
   )
+
+  return isNativeMobile() ? (
+    <MobileGestureLayer>{content}</MobileGestureLayer>
+  ) : content
 }
 
 export default App

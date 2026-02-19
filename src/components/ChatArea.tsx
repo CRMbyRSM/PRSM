@@ -1,7 +1,9 @@
 import { useRef, useEffect, Fragment, memo, useMemo, useCallback, Component, ErrorInfo, ReactNode, useState } from 'react'
 import { useStore, ToolCall } from '../store'
-import { Message, stripAnsi } from '../lib/openclaw-client'
+import { Message, stripAnsi } from '../lib/openclaw'
 import { SubagentBlock } from './SubagentBlock'
+import { resolveToolDisplay, extractToolDetail } from '../lib/openclaw/tool-display'
+import { ToolIcon } from './ToolIcon'
 import { format, isSameDay } from 'date-fns'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -103,31 +105,104 @@ function ThinkingBlock({ content }: { content: string }) {
 function ToolCallBlock({ toolCall }: { toolCall: ToolCall }) {
   const [expanded, setExpanded] = useState(false)
   const isRunning = toolCall.phase === 'start'
+  const hasResult = !!toolCall.result
+  const clickable = hasResult
+
+  const display = resolveToolDisplay(toolCall.name)
+  const detail = extractToolDetail(toolCall.name, toolCall.args)
+
+  // Short preview of the result (first ~200 chars)
+  const resultPreview = useMemo(() => {
+    if (!toolCall.result) return ''
+    const clean = stripAnsi(toolCall.result)
+    return clean.length > 200 ? clean.slice(0, 200) + '…' : clean
+  }, [toolCall.result])
+
+  const handleClick = useCallback(() => {
+    if (clickable) setExpanded(prev => !prev)
+  }, [clickable])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (clickable && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault()
+      setExpanded(prev => !prev)
+    }
+  }, [clickable])
 
   return (
-    <div className={`tool-call-block ${isRunning ? 'running' : 'completed'}`}>
-      <button className="tool-call-header" onClick={() => setExpanded(!expanded)}>
+    <div
+      className={`chat-tool-card ${clickable ? 'chat-tool-card--clickable' : ''}`}
+      style={expanded ? { maxHeight: 'none' } : undefined}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      tabIndex={clickable ? 0 : undefined}
+      role={clickable ? 'button' : undefined}
+      aria-expanded={clickable ? expanded : undefined}
+    >
+      <div className="chat-tool-card__header">
+        <span className="chat-tool-card__title">
+          <span className="chat-tool-card__icon">
+            {isRunning ? (
+              <svg className="spinning" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" opacity="0.25" />
+                <path d="M12 2a10 10 0 019.95 9" />
+              </svg>
+            ) : (
+              <ToolIcon type={display.icon} />
+            )}
+          </span>
+          {display.title}
+        </span>
+
         {isRunning ? (
-          <svg className="tool-call-icon spinning" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 6v6l4 2" />
-          </svg>
+          <span className="chat-tool-card__running-text">Running…</span>
+        ) : hasResult ? (
+          <span className="chat-tool-card__action">
+            <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
+            {expanded ? 'Collapse' : 'View'}
+          </span>
         ) : (
-          <svg className="tool-call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M20 6L9 17l-5-5" />
-          </svg>
+          <span className="chat-tool-card__status">
+            <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg>
+          </span>
         )}
-        <span className="tool-call-name">{toolCall.name}</span>
-        <span className="tool-call-status">{isRunning ? 'Running...' : 'Done'}</span>
-        <svg className={`tool-call-chevron ${expanded ? 'expanded' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M6 9l6 6 6-6" />
-        </svg>
-      </button>
-      {expanded && toolCall.result && (
-        <div className="tool-call-result">
-          <pre>{stripAnsi(toolCall.result)}</pre>
+      </div>
+
+      {detail && (
+        <div className="chat-tool-card__detail mono">{detail}</div>
+      )}
+
+      {/* Collapsed: show short preview */}
+      {!expanded && hasResult && resultPreview && (
+        <div className="chat-tool-card__preview mono">{resultPreview}</div>
+      )}
+
+      {/* Expanded: show full result */}
+      {expanded && hasResult && (
+        <div className="chat-tool-card__inline mono">
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '400px', overflow: 'auto' }}>
+            {stripAnsi(toolCall.result!)}
+          </pre>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Wraps multiple ToolCallBlocks in an agent-style bubble */
+function ToolCallBubble({ toolCalls }: { toolCalls: ToolCall[] }) {
+  return (
+    <div className="message agent tool-call-bubble">
+      <div className="message-avatar agent-avatar">
+        <img src={logoUrl} alt="Agent" className="agent-avatar-img" />
+      </div>
+      <div className="message-content">
+        <div className="message-bubble">
+          {toolCalls.map(tc => (
+            <ToolCallBlock key={tc.toolCallId} toolCall={tc} />
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
@@ -310,11 +385,7 @@ export function ChatArea() {
                 />
               </MessageErrorBoundary>
               {thinkingEnabled && msgToolCalls && msgToolCalls.length > 0 && (
-                <div className="tool-calls-container">
-                  {msgToolCalls.map(tc => (
-                    <ToolCallBlock key={tc.toolCallId} toolCall={tc} />
-                  ))}
-                </div>
+                <ToolCallBubble toolCalls={msgToolCalls} />
               )}
               {thinkingEnabled && msgSubagents && msgSubagents.length > 0 && (
                 <div className="subagents-container">
@@ -329,11 +400,7 @@ export function ChatArea() {
 
         {/* Trailing tool calls / subagents not attached to a specific message */}
         {thinkingEnabled && toolCallsByMessageId.get('__trailing__') && (
-          <div className="tool-calls-container">
-            {toolCallsByMessageId.get('__trailing__')!.map(tc => (
-              <ToolCallBlock key={tc.toolCallId} toolCall={tc} />
-            ))}
-          </div>
+          <ToolCallBubble toolCalls={toolCallsByMessageId.get('__trailing__')!} />
         )}
         {thinkingEnabled && subagentsByMessageId.get('__trailing__') && (
           <div className="subagents-container">
