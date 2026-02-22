@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store'
+import { clearDeviceToken } from '../lib/device-identity'
 
 export function SettingsModal() {
   const {
@@ -95,6 +96,14 @@ export function SettingsModal() {
     setAuthMode(mode)
     setGatewayToken(trimmedToken)
     setUpdatePolicy(localUpdatePolicy)
+
+    // Clear stored device token so the fresh gateway token is used immediately
+    try {
+      const host = new URL(trimmedUrl).host
+      await clearDeviceToken(host)
+    } catch {
+      // URL parsing failed or storage error — proceed anyway
+    }
 
     // Small delay to let disconnect + state settle before reconnecting
     await new Promise(r => setTimeout(r, 100))

@@ -1,7 +1,7 @@
 // OpenClaw Client - Chat API Methods
 
 import type { Message, RpcCaller } from './types'
-import { stripAnsi, stripSystemNotifications, stripConversationMetadata } from './utils'
+import { stripAnsi, stripSystemNotifications, stripConversationMetadata, parseMediaTokens } from './utils'
 
 export interface HistoryToolCall {
   toolCallId: string
@@ -15,6 +15,13 @@ export interface HistoryToolCall {
 export interface ChatHistoryResult {
   messages: Message[]
   toolCalls: HistoryToolCall[]
+}
+
+export interface ChatAttachmentInput {
+  type?: string
+  mimeType?: string
+  fileName?: string
+  content: string
 }
 
 export async function getSessionMessages(call: RpcCaller, sessionId: string): Promise<ChatHistoryResult> {
@@ -214,16 +221,27 @@ export async function getSessionMessages(call: RpcCaller, sessionId: string): Pr
           content = stripConversationMetadata(content).trim()
         }
 
+        // Parse MEDIA: tokens from assistant messages and convert to image URLs
+        let mediaImages: Array<{ url: string; alt?: string }> | undefined
+        if (normalizedRole === 'assistant' && content.includes('MEDIA:')) {
+          const parsed = parseMediaTokens(content)
+          content = parsed.cleanText
+          if (parsed.images.length > 0) {
+            mediaImages = parsed.images
+          }
+        }
+
         // Filter out non-assistant entries without displayable text content.
         // Keep empty assistant messages so tool calls can anchor to them.
-        if (!content && normalizedRole !== 'assistant') return null
+        if (!content && !mediaImages && normalizedRole !== 'assistant') return null
 
         return {
           id: msgId,
           role: normalizedRole,
           content: stripAnsi(content),
           thinking: thinking ? stripAnsi(thinking) : thinking,
-          timestamp: new Date(msg.timestamp || m.timestamp || msg.ts || m.ts || msg.createdAt || m.createdAt || Date.now()).toISOString()
+          timestamp: new Date(msg.timestamp || m.timestamp || msg.ts || m.ts || msg.createdAt || m.createdAt || Date.now()).toISOString(),
+          ...(mediaImages ? { mediaImages } : {})
         }
       }) as (Message | null)[]
 
@@ -288,6 +306,7 @@ export async function sendMessage(call: RpcCaller, params: {
   content: string
   agentId?: string
   thinking?: boolean
+  attachments?: ChatAttachmentInput[]
 }): Promise<{ sessionKey?: string }> {
   const idempotencyKey = crypto.randomUUID()
   const payload: Record<string, unknown> = {
@@ -298,7 +317,10 @@ export async function sendMessage(call: RpcCaller, params: {
   payload.sessionKey = params.sessionId || (params.agentId ? `agent:${params.agentId}:main` : 'agent:main:main')
 
   if (params.thinking) {
-    payload.thinking = 'normal'
+    payload.thinking = 'low'
+  }
+  if (params.attachments && params.attachments.length > 0) {
+    payload.attachments = params.attachments
   }
 
   const result = await call<any>('chat.send', payload)

@@ -1716,6 +1716,55 @@ a {
   background: rgba(16, 24, 40, 0.04);
 }
 
+/* Agent-generated inline media images (MEDIA: tokens) */
+.message-media-images {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.media-image {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: var(--radius-md);
+  object-fit: contain;
+}
+
+/* Thinking pulse (streaming indicator inside ThinkingBlock) */
+.thinking-pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-amber, #f59e0b);
+  animation: thinking-pulse-anim 1.4s ease-in-out infinite;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+@keyframes thinking-pulse-anim {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* Compaction indicator */
+.compaction-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.compaction-indicator svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-cyan, #17a192);
+}
+
 /* Typing Indicator */
 .typing-indicator {
   display: flex;

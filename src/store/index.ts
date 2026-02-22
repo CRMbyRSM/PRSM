@@ -85,7 +85,7 @@ interface AppState {
   toggleSessionGroup: (label: string) => void
 
   // Main View State
-  mainView: 'chat' | 'skill-detail' | 'cron-detail' | 'agent-detail' | 'create-agent' | 'clawhub-skill-detail' | 'server-settings' | 'pixel-dashboard'
+  mainView: 'chat' | 'skill-detail' | 'cron-detail' | 'create-cron' | 'agent-detail' | 'create-agent' | 'clawhub-skill-detail' | 'server-settings' | 'usage' | 'pixel-dashboard'
   setMainView: (view: AppState['mainView']) => void
   selectedSkill: Skill | null
   selectedCronJob: CronJob | null
@@ -96,6 +96,8 @@ interface AppState {
   closeDetailView: () => void
   openServerSettings: () => void
   openDashboard: () => void
+  openUsage: () => void
+  openCreateCron: () => void
   showCreateAgent: () => void
   createAgent: (params: CreateAgentParams) => Promise<{ success: boolean; error?: string }>
   deleteAgent: (agentId: string) => Promise<{ success: boolean; error?: string }>
@@ -112,6 +114,8 @@ interface AppState {
   hadStreamChunks: boolean
   thinkingEnabled: boolean
   setThinkingEnabled: (enabled: boolean) => void
+  streamingThinking: Record<string, string>
+  compactingSession: string | null
 
   // Display Settings
   fontSize: number // percentage: 80, 90, 100, 110, 120, 130
@@ -350,6 +354,8 @@ export const useStore = create<AppState>()(
       closeDetailView: () => set({ mainView: 'chat', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
       openServerSettings: () => set({ mainView: 'server-settings', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
       openDashboard: () => set({ mainView: 'pixel-dashboard', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
+      openUsage: () => set({ mainView: 'usage', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
+      openCreateCron: () => set({ mainView: 'create-cron', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
       showCreateAgent: () => set({ mainView: 'create-agent', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
       createAgent: async (params) => {
         const { client } = get()
@@ -557,6 +563,8 @@ export const useStore = create<AppState>()(
       hadStreamChunks: false,
       thinkingEnabled: false,
       setThinkingEnabled: (enabled) => set({ thinkingEnabled: enabled }),
+      streamingThinking: {},
+      compactingSession: null,
 
       // Display Settings
       fontSize: 100,
@@ -1147,7 +1155,7 @@ export const useStore = create<AppState>()(
           })
 
           client.on('disconnected', () => {
-            set({ connected: false, isStreaming: false, hadStreamChunks: false, activeToolCalls: [], streamingSessionId: null, agentBusy: false, messageQueue: [] })
+            set({ connected: false, isStreaming: false, hadStreamChunks: false, activeToolCalls: [], streamingSessionId: null, agentBusy: false, messageQueue: [], streamingThinking: {}, compactingSession: null })
             get().stopSubagentPolling()
           })
 
@@ -1192,6 +1200,11 @@ export const useStore = create<AppState>()(
               text = String(chunkArg ?? '')
             }
             const kind = (chunkArg && typeof chunkArg === 'object') ? String((chunkArg as any).kind || '') : ''
+
+            // Strip MEDIA: lines from streaming text so they don't flash in the UI
+            if (text.includes('MEDIA:')) {
+              text = text.split('\n').filter(l => !/\bMEDIA:\s/i.test(l)).join('\n').trim()
+            }
 
             // Session filtering — use streamingSessionId (set by sendMessage or streamStart)
             // as the reliable source; fall back to per-chunk sessionKey.
@@ -1283,7 +1296,15 @@ export const useStore = create<AppState>()(
               }
             }
 
-            set({ isStreaming: false, streamingSessionId: null, hadStreamChunks: false, activeToolCalls: [], agentBusy: false })
+            const endedKey = endSession || ''
+            set((state) => ({
+              isStreaming: false,
+              streamingSessionId: null,
+              hadStreamChunks: false,
+              activeToolCalls: [],
+              agentBusy: false,
+              streamingThinking: endedKey ? (() => { const { [endedKey]: _t, ...rest } = state.streamingThinking; return rest })() : state.streamingThinking
+            }))
             get().stopSubagentPolling()
 
             // Process queued messages
@@ -1412,6 +1433,41 @@ export const useStore = create<AppState>()(
             })
           })
 
+          client.on('thinkingChunk', (payload: unknown) => {
+            const { text, cumulative, sessionKey } = payload as {
+              text: string; cumulative: boolean; sessionKey?: string
+            }
+            const { currentSessionId } = get()
+            const resolvedKey = sessionKey || currentSessionId
+            if (!resolvedKey) return
+
+            const isCurrentSession = !sessionKey || !currentSessionId || sessionKey === currentSessionId
+            if (!isCurrentSession) return
+
+            set((state) => {
+              const prev = state.streamingThinking[resolvedKey] || ''
+              const next = cumulative ? text : prev + text
+              return {
+                streamingThinking: { ...state.streamingThinking, [resolvedKey]: next }
+              }
+            })
+          })
+
+          client.on('compaction', (payload: unknown) => {
+            const { phase, sessionKey } = payload as { phase: string; willRetry: boolean; sessionKey?: string }
+            const { currentSessionId } = get()
+            const resolvedKey = sessionKey || currentSessionId
+            if (!resolvedKey) return
+
+            if (phase === 'start') {
+              set({ compactingSession: resolvedKey })
+            } else if (phase === 'end') {
+              set((state) => ({
+                compactingSession: state.compactingSession === resolvedKey ? null : state.compactingSession
+              }))
+            }
+          })
+
           await client.connect()
           ;(globalThis as any).__prsmClient = client
           set({ client })
@@ -1527,6 +1583,7 @@ export const useStore = create<AppState>()(
             sessionId: requestedSessionId,
             content,
             agentId: currentAgentId || undefined,
+            thinking: get().thinkingEnabled,
             attachments
           })
 
@@ -1681,3 +1738,7 @@ if (import.meta.hot) {
     }
   })
 }
+
+// Selectors
+export const selectStreamingThinking = (state: AppState) => state.streamingThinking[state.currentSessionId || ''] || ''
+export const selectIsCompacting = (state: AppState) => state.compactingSession === state.currentSessionId

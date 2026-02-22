@@ -6,6 +6,7 @@ export interface Message {
   content: string
   timestamp: string
   thinking?: string
+  mediaImages?: Array<{ url: string; alt?: string }>
 }
 
 export interface Session {

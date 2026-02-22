@@ -1,5 +1,5 @@
 import { useRef, useEffect, Fragment, memo, useMemo, useCallback, Component, ErrorInfo, ReactNode, useState } from 'react'
-import { useStore, ToolCall } from '../store'
+import { useStore, ToolCall, selectStreamingThinking, selectIsCompacting } from '../store'
 import { Message, stripAnsi } from '../lib/openclaw'
 import { SubagentBlock } from './SubagentBlock'
 import { resolveToolDisplay, extractToolDetail } from '../lib/openclaw/tool-display'
@@ -86,9 +86,9 @@ const remarkPlugins = [remarkGfm]
 const rehypePlugins = [rehypeSanitize]
 
 /** Compact thinking block — matches webchat style: small, muted, truncated */
-function ThinkingBlock({ content }: { content: string }) {
+function ThinkingBlock({ text, streaming }: { text: string; streaming: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const safeContent = safe(content)
+  const safeContent = safe(text)
 
   return (
     <div
@@ -98,6 +98,7 @@ function ThinkingBlock({ content }: { content: string }) {
       <em>Reasoning:</em>
       {' '}
       <span className="thinking-text">{safeContent}</span>
+      {streaming && <span className="thinking-pulse" />}
     </div>
   )
 }
@@ -222,6 +223,8 @@ export function ChatArea() {
   const agentBusy = useStore((s) => s.agentBusy)
   const messageQueue = useStore((s) => s.messageQueue)
   const removeFromQueue = useStore((s) => s.removeFromQueue)
+  const streamingThinking = useStore(selectStreamingThinking)
+  const isCompacting = useStore(selectIsCompacting)
   const chatEndRef = useRef<HTMLDivElement>(null)
   const isAutoScrollRef = useRef(true)
   const chatAreaRef = useRef<HTMLDivElement>(null)
@@ -382,6 +385,7 @@ export function ChatArea() {
                   isStreaming={isLastMessage && isStreaming}
                   sessionId={currentSessionId}
                   thinkingEnabled={thinkingEnabled}
+                  streamingThinking={isLastMessage && isStreaming && !message.thinking ? streamingThinking : undefined}
                 />
               </MessageErrorBoundary>
               {thinkingEnabled && msgToolCalls && msgToolCalls.length > 0 && (
@@ -446,6 +450,22 @@ export function ChatArea() {
               <path d="M12 6v6l4 2" />
             </svg>
             <span>Agent is working in another session...</span>
+          </div>
+        )}
+
+        {isCompacting && isStreaming && (
+          <div className="message agent compaction-indicator-container">
+            <div className="message-avatar agent-avatar working">
+              <img src={logoUrl} alt="Agent" className="agent-avatar-img" />
+            </div>
+            <div className="message-content">
+              <div className="compaction-indicator">
+                <svg className="spinning" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+                <span>Compacting context...</span>
+              </div>
+            </div>
           </div>
         )}
 
@@ -652,7 +672,8 @@ const MessageBubble = memo(function MessageBubble({
   channel,
   isStreaming,
   sessionId,
-  thinkingEnabled
+  thinkingEnabled,
+  streamingThinking
 }: {
   message: Message
   agentName?: string
@@ -660,6 +681,7 @@ const MessageBubble = memo(function MessageBubble({
   isStreaming?: boolean
   sessionId?: string | null
   thinkingEnabled?: boolean
+  streamingThinking?: string
 }) {
   const isUser = message.role === 'user'
   const time = format(new Date(message.timestamp), 'h:mm a')
@@ -738,10 +760,26 @@ const MessageBubble = memo(function MessageBubble({
               ))}
             </div>
           )}
-          {thinkingEnabled && message.thinking && (
-            <ThinkingBlock content={message.thinking} />
+          {thinkingEnabled && (message.thinking || streamingThinking) && (
+            <ThinkingBlock
+              text={message.thinking || streamingThinking || ''}
+              streaming={!!streamingThinking && !message.thinking}
+            />
           )}
           <MessageContent content={safe(message.content)} />
+          {message.mediaImages && message.mediaImages.length > 0 && (
+            <div className="message-media-images">
+              {message.mediaImages.map((img, i) => (
+                <img
+                  key={i}
+                  src={safe(img.url)}
+                  alt={safe(img.alt || 'Generated image')}
+                  className="media-image"
+                  loading="lazy"
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

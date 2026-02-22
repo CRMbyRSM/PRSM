@@ -255,6 +255,18 @@ export function RightPanel() {
         </>
       ) : (
         <div className="panel-content">
+          <div style={{ marginBottom: '12px', padding: '0 8px' }}>
+            <button
+              className="settings-button primary"
+              onClick={() => useStore.getState().openCreateCron()}
+              style={{ width: '100%', padding: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Create New Cron Job
+            </button>
+          </div>
           {filteredCronJobs.length > 0 ? (
             filteredCronJobs.map((job, index) => (
               <CronJobItem

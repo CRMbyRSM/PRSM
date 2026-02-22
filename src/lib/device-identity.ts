@@ -158,3 +158,15 @@ export async function signConnectPayload(
     nonce: params.nonce
   }
 }
+
+// ── Clear device token (no-op for PRSM — uses single global identity, not per-host tokens) ──
+
+/**
+ * Clear the stored device token for a specific host.
+ * PRSM uses a single shared identity rather than per-host tokens,
+ * so this is a no-op — reconnection with the new token is handled by the caller.
+ */
+export async function clearDeviceToken(_host: string): Promise<void> {
+  // No-op: PRSM uses a single global device identity, not per-host tokens.
+  // The reconnect flow in SettingsModal handles re-authentication.
+}

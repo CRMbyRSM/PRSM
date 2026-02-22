@@ -254,3 +254,51 @@ export function isToolResultMessage(msg: any): boolean {
   }
   return false
 }
+
+/**
+ * Parse MEDIA: tokens from message text.
+ * OpenClaw agents emit "MEDIA: /path/to/file" lines for generated images.
+ * This extracts the paths and returns cleaned text with MEDIA lines removed.
+ */
+export function parseMediaTokens(text: string, gatewayUrl?: string): {
+  cleanText: string
+  images: Array<{ url: string; mimeType?: string; alt?: string }>
+} {
+  const MEDIA_RE = /\bMEDIA:\s*`?([^\n`]+)`?/gi
+  const images: Array<{ url: string; mimeType?: string; alt?: string }> = []
+  const cleanLines: string[] = []
+
+  for (const line of text.split('\n')) {
+    const matches = Array.from(line.matchAll(MEDIA_RE))
+    if (matches.length === 0) {
+      cleanLines.push(line)
+      continue
+    }
+    for (const match of matches) {
+      let mediaPath = match[1].trim()
+      if (mediaPath.endsWith('`')) mediaPath = mediaPath.slice(0, -1).trim()
+      if (!mediaPath) continue
+
+      if (mediaPath.startsWith('/') && !mediaPath.startsWith('//')) {
+        let baseUrl = ''
+        if (gatewayUrl) {
+          try {
+            const u = new URL(gatewayUrl)
+            const protocol = u.protocol === 'wss:' ? 'https:' : u.protocol === 'ws:' ? 'http:' : u.protocol
+            baseUrl = `${protocol}//${u.host}`
+          } catch { /* ignore */ }
+        }
+        images.push({
+          url: `${baseUrl}/api/media${mediaPath}`,
+          alt: mediaPath.split('/').pop() || 'Generated image'
+        })
+      } else if (/^https?:\/\//i.test(mediaPath)) {
+        images.push({ url: mediaPath, alt: 'Generated image' })
+      }
+    }
+    const remainder = line.replace(MEDIA_RE, '').trim()
+    if (remainder) cleanLines.push(remainder)
+  }
+
+  return { cleanText: cleanLines.join('\n'), images }
+}

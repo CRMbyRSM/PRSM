@@ -786,6 +786,7 @@ export class OpenClawClient {
     content: string
     agentId?: string
     thinking?: boolean
+    attachments?: chatApi.ChatAttachmentInput[]
   }): Promise<{ sessionKey?: string }> {
     return chatApi.sendMessage(this.call.bind(this), params)
   }

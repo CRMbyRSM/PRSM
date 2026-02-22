@@ -416,3 +416,96 @@ ipcMain.handle('update:installUpdate', async () => {
 ipcMain.handle('update:syncPolicy', async (_event, policy: string, lastCheck: number) => {
   writeUpdateConfig({ policy, lastCheck })
 })
+
+// Open a subagent popout window
+ipcMain.handle('subagent:openPopout', async (_event, params: {
+  sessionKey: string
+  serverUrl: string
+  authToken: string
+  authMode: string
+  label: string
+}) => {
+  const hash = `#subagent?sessionKey=${encodeURIComponent(params.sessionKey)}&serverUrl=${encodeURIComponent(params.serverUrl)}&authToken=${encodeURIComponent(params.authToken)}&authMode=${encodeURIComponent(params.authMode)}`
+
+  const popout = new BrowserWindow({
+    width: 800,
+    height: 700,
+    minWidth: 500,
+    minHeight: 400,
+    title: `Subagent: ${params.label}`,
+    icon: join(__dirname, '../build/icon.png'),
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      devTools: !app.isPackaged
+    },
+    backgroundColor: '#0d1117'
+  })
+
+  popout.setMenuBarVisibility(false)
+
+  popout.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
+
+  popout.webContents.on('will-navigate', (event, url) => {
+    const appOrigin = process.env.VITE_DEV_SERVER_URL
+      ? new URL(process.env.VITE_DEV_SERVER_URL).origin
+      : 'file://'
+    if (!url.startsWith(appOrigin)) {
+      event.preventDefault()
+      if (url.startsWith('http:') || url.startsWith('https:')) {
+        shell.openExternal(url)
+      }
+    }
+  })
+
+  if (process.env.VITE_DEV_SERVER_URL) {
+    popout.loadURL(`${process.env.VITE_DEV_SERVER_URL}${hash}`)
+  } else {
+    popout.loadFile(join(__dirname, '../dist/index.html'), { hash: hash.slice(1) })
+  }
+})
+
+// Open a tool call popout window
+ipcMain.handle('toolcall:openPopout', async (_event, params: {
+  toolCallId: string
+  name: string
+}) => {
+  const hash = `#toolcall?id=${encodeURIComponent(params.toolCallId)}`
+
+  const popout = new BrowserWindow({
+    width: 700,
+    height: 600,
+    minWidth: 400,
+    minHeight: 300,
+    title: `Tool: ${params.name}`,
+    icon: join(__dirname, '../build/icon.png'),
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      devTools: !app.isPackaged
+    },
+    backgroundColor: '#0d1117'
+  })
+
+  popout.setMenuBarVisibility(false)
+
+  popout.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
+
+  if (process.env.VITE_DEV_SERVER_URL) {
+    popout.loadURL(`${process.env.VITE_DEV_SERVER_URL}${hash}`)
+  } else {
+    popout.loadFile(join(__dirname, '../dist/index.html'), { hash: hash.slice(1) })
+  }
+})

@@ -28,6 +28,7 @@ export function Sidebar() {
     selectAgentForDetail,
     showCreateAgent,
     openDashboard,
+    openUsage,
     mainView,
     unreadCounts,
     collapsedSessionGroups,
@@ -202,6 +203,16 @@ export function Sidebar() {
             <rect x="14" y="14" width="7" height="7" rx="1" />
           </svg>
           <span>Dashboard</span>
+        </button>
+
+        <button
+          className={`dashboard-link-btn ${mainView === 'usage' ? 'active' : ''}`}
+          onClick={openUsage}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+          <span>Server Usage</span>
         </button>
 
         <div className="sessions-section">
