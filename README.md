@@ -213,38 +213,58 @@ npm install
 
 # Development (Vite hot reload + Electron)
 npm run dev
+```
 
-# Build for a single platform
-npm run build:win        # Windows (Setup + Portable)
-npm run build:linux      # Linux (AppImage)
-npm run build:mac        # macOS (DMG)
-npm run build:all        # Windows + Linux
+### ⚠️ Release Build Rule
 
-# Full release build (all desktop + Android APK)
+**Every release MUST include ALL four packages.** Use `build:release` — never `build` or `build:linux` alone.
+
+```bash
+# ✅ CORRECT — builds everything: Windows NSIS + Portable, Linux AppImage, Android APK
+npm run build:release
+
+# ❌ WRONG — only builds one platform, not a complete release
+npm run build
+npm run build:linux
+```
+
+The `build:release` script:
+1. Builds Electron app for **Windows** (NSIS installer + portable) and **Linux** (AppImage)
+2. Builds the mobile web bundle
+3. Syncs to the Capacitor Android project
+4. Compiles the **Android APK** via Gradle
+5. Copies all artifacts to `release/`
+
+**First-time Android setup** (if `android/` directory doesn't exist):
+```bash
+export ANDROID_HOME=/home/riktanius/android-sdk
+export ANDROID_SDK_ROOT=/home/riktanius/android-sdk
+npx cap add android    # only needed once — generates the android/ project
 npm run build:release
 ```
 
-### Android Build
+> See `RELEASE.md` for the full release checklist.
+
+### Manual builds (development only)
 
 ```bash
-# Build web assets and sync to Android project
-npm run mobile:sync
-
-# Open in Android Studio
-npm run mobile:android
-
-# Or build the APK directly
-cd android && ./gradlew assembleDebug
+npm run build:win        # Windows (Setup + Portable)
+npm run build:linux      # Linux (AppImage)
+npm run build:mac        # macOS (DMG)
+npm run mobile:sync      # Build web assets + sync to Android
+npm run mobile:android   # Open in Android Studio
 ```
 
 ### Requirements
 
-| Dependency | Version |
-|------------|---------|
-| Node.js | 18+ |
-| npm | 9+ |
-| Android Studio | Latest (for Android builds) |
-| Java JDK | 17+ (for Android builds) |
+| Dependency | Version | Notes |
+|------------|---------|-------|
+| Node.js | 18+ | |
+| npm | 9+ | |
+| Java JDK | 17+ | Required for Android builds |
+| Android SDK | API 34+ | Set `ANDROID_HOME=/home/riktanius/android-sdk` |
+| Wine | Any | Required for Windows cross-builds on Linux |
+| NSIS | 3+ | Required for Windows installer on Linux (`apt install nsis`) |
 
 ---
 
