@@ -7,6 +7,7 @@ import { useLongPress } from '../hooks/useLongPress'
 import { SessionContextMenu } from './SessionContextMenu'
 import { isNativeMobile } from '../lib/platform'
 import { safe } from '../lib/safe-render'
+import { getSessionStatusSummary, sessionKeyOf } from '../lib/view-state'
 import logoUrl from '../../build/icon.png'
 
 export function Sidebar() {
@@ -27,9 +28,15 @@ export function Sidebar() {
     setCurrentAgent,
     selectAgentForDetail,
     showCreateAgent,
+    openSystemView,
+    openWorkspaceView,
     openDashboard,
     openUsage,
     mainView,
+    connected,
+    isStreaming,
+    agentBusy,
+    activeSubagents,
     unreadCounts,
     collapsedSessionGroups,
     toggleSessionGroup,
@@ -100,7 +107,7 @@ export function Sidebar() {
     const systemSessionRe = /^agent:[^:]+:(main|cron)(:|$)/
     const seen = new Set<string>()
     return sessions.filter(s => {
-      const key = s.key || s.id
+      const key = sessionKeyOf(s)
       if (seen.has(key)) return false
       seen.add(key)
       if (key === currentSessionId) return true
@@ -191,6 +198,43 @@ export function Sidebar() {
           </svg>
           <span>New Chat</span>
         </button>
+
+        <div className="sidebar-surface-nav">
+          <button
+            className={`dashboard-link-btn ${mainView === 'chat' ? 'active' : ''}`}
+            onClick={() => currentSessionId ? setCurrentSession(currentSessionId) : useStore.getState().setMainView('chat')}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+            </svg>
+            <span>Chat</span>
+          </button>
+
+          <button
+            className={`dashboard-link-btn ${mainView === 'system' ? 'active' : ''}`}
+            onClick={openSystemView}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 12h18" />
+              <path d="M12 3v18" />
+              <circle cx="12" cy="12" r="9" />
+            </svg>
+            <span>System</span>
+            <span className={`nav-micro-indicator ${!connected ? 'critical' : isStreaming || agentBusy || activeSubagents.length > 0 ? 'warn' : 'ok'}`} />
+          </button>
+
+          <button
+            className={`dashboard-link-btn ${mainView === 'workspace' ? 'active' : ''}`}
+            onClick={openWorkspaceView}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 7h18" />
+              <path d="M3 12h18" />
+              <path d="M3 17h12" />
+            </svg>
+            <span>Workspace</span>
+          </button>
+        </div>
 
         <button
           className={`dashboard-link-btn ${mainView === 'pixel-dashboard' ? 'active' : ''}`}
@@ -283,12 +327,12 @@ export function Sidebar() {
                     <div className="session-group-items">
                       {group.sessions.map((session) => (
                         <SessionItem
-                          key={session.key || session.id}
+                          key={sessionKeyOf(session)}
                           session={session}
-                          isActive={(session.key || session.id) === currentSessionId}
+                          isActive={sessionKeyOf(session) === currentSessionId}
                           currentAgentId={currentAgentId}
                           agentMap={agentMap}
-                          unreadCount={unreadCounts[session.key || session.id] || 0}
+                          unreadCount={unreadCounts[sessionKeyOf(session)] || 0}
                           onSelect={setCurrentSession}
                           onContextMenu={handleContextMenu}
                           onLongPress={handleLongPress}
@@ -446,10 +490,31 @@ function SessionItem({
   onLongPress: (sessionId: string, title: string, point: { clientX: number; clientY: number }) => void
   onDelete: (id: string) => void
 }) {
-  const sessionKey = session.key || session.id
+  const sessionKey = sessionKeyOf(session)
+  const {
+    streamingSessionId,
+    isStreaming,
+    unreadCounts,
+    currentSessionId,
+    activeSubagents,
+    connected,
+    compactingSession
+  } = useStore()
+
   const sessionAgent = session.agentId && session.agentId !== currentAgentId
     ? agentMap.get(session.agentId)
     : undefined
+
+  const status = getSessionStatusSummary({
+    sessionKey,
+    currentSessionId,
+    streamingSessionId,
+    isStreaming,
+    connected,
+    unreadCounts,
+    compactingSession,
+    activeSubagents
+  })
 
   const longPressHandlers = useLongPress(
     useCallback((point: { clientX: number; clientY: number }) => {
@@ -464,7 +529,7 @@ function SessionItem({
       onContextMenu={isNativeMobile() ? undefined : (e) => onContextMenu(e, sessionKey, session.title)}
       {...longPressHandlers}
     >
-      <div className="session-indicator" />
+      <div className={`session-indicator ${status.tone === 'idle' ? '' : status.tone}`} />
       {session.spawned && (
         <span className="session-spawned-badge" title="Spawned subagent session">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -487,8 +552,16 @@ function SessionItem({
         {session.lastMessage && (
           <div className="session-preview">{safe(session.lastMessage)}</div>
         )}
-        <div className="session-time">
-          {safe(formatDistanceToNow(new Date(session.updatedAt), { addSuffix: true }))}
+        <div className="session-time-row">
+          <div className="session-time">
+            {safe(formatDistanceToNow(new Date(session.updatedAt), { addSuffix: true }))}
+          </div>
+          <div className="session-status-badges">
+            {status.isStreaming && <span className="session-state-badge streaming">live</span>}
+            {status.isCompacting && <span className="session-state-badge compacting">compact</span>}
+            {status.hasSubagents && <span className="session-state-badge info">subagents</span>}
+            {status.isErrored && <span className="session-state-badge error">offline</span>}
+          </div>
         </div>
       </div>
       {unreadCount > 0 && (

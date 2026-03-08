@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile, stripThinkingTags, CreateAgentParams, buildIdentityContent } from '../lib/openclaw'
-import { isToolResultMessage } from '../lib/openclaw/utils'
 import type { ClawHubSkill, ClawHubSort } from '../lib/clawhub'
 import { listClawHubSkills, searchClawHub, getClawHubSkill, getClawHubSkillVersion, getClawHubSkillConvex } from '../lib/clawhub'
 import * as Platform from '../lib/platform'
 import { deepSanitize } from '../lib/safe-render'
+import type { MainView, SystemSubview } from '../lib/view-state'
 
 // Cache for ClawHub stats (downloads/stars) to enrich search results
 const _clawHubStatsCache = new Map<string, { downloads: number; stars: number }>()
@@ -85,8 +85,11 @@ interface AppState {
   toggleSessionGroup: (label: string) => void
 
   // Main View State
-  mainView: 'chat' | 'skill-detail' | 'cron-detail' | 'create-cron' | 'agent-detail' | 'create-agent' | 'clawhub-skill-detail' | 'server-settings' | 'usage' | 'pixel-dashboard'
+  mainView: MainView
   setMainView: (view: AppState['mainView']) => void
+  lastSurfaceView: 'chat' | 'system' | 'workspace'
+  systemSubview: SystemSubview
+  setSystemSubview: (view: SystemSubview) => void
   selectedSkill: Skill | null
   selectedCronJob: CronJob | null
   selectedAgentDetail: AgentDetail | null
@@ -95,6 +98,8 @@ interface AppState {
   selectAgentForDetail: (agent: Agent) => Promise<void>
   closeDetailView: () => void
   openServerSettings: () => void
+  openSystemView: () => void
+  openWorkspaceView: () => void
   openDashboard: () => void
   openUsage: () => void
   openCreateCron: () => void
@@ -300,7 +305,13 @@ export const useStore = create<AppState>()(
 
       // Main View State
       mainView: 'chat',
-      setMainView: (view) => set({ mainView: view }),
+      lastSurfaceView: 'chat',
+      systemSubview: 'overview',
+      setMainView: (view) => set((state) => ({
+        mainView: view,
+        lastSurfaceView: view === 'chat' || view === 'system' || view === 'workspace' ? view : state.lastSurfaceView
+      })),
+      setSystemSubview: (view) => set({ systemSubview: view, mainView: 'system', lastSurfaceView: 'system' }),
       selectedSkill: null,
       selectedCronJob: null,
       selectedAgentDetail: null,
@@ -351,8 +362,16 @@ export const useStore = create<AppState>()(
           }
         }
       },
-      closeDetailView: () => set({ mainView: 'chat', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
+      closeDetailView: () => set((state) => ({
+        mainView: state.lastSurfaceView || 'chat',
+        selectedSkill: null,
+        selectedCronJob: null,
+        selectedAgentDetail: null,
+        selectedClawHubSkill: null
+      })),
       openServerSettings: () => set({ mainView: 'server-settings', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
+      openSystemView: () => set({ mainView: 'system', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
+      openWorkspaceView: () => set({ mainView: 'workspace', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
       openDashboard: () => set({ mainView: 'pixel-dashboard', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
       openUsage: () => set({ mainView: 'usage', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),
       openCreateCron: () => set({ mainView: 'create-cron', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null }),

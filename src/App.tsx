@@ -17,7 +17,10 @@ import { ServerSettingsView } from './components/ServerSettingsView'
 import { AgentDashboard } from './components/AgentDashboard'
 import { UsageView } from './components/UsageView'
 import { CreateCronJobView } from './components/CreateCronJobView'
+import { SystemView } from './components/SystemView'
+import { WorkspaceView } from './components/WorkspaceView'
 import { MobileGestureLayer } from './components/MobileGestureLayer'
+import { MobileSurfaceNav } from './components/MobileSurfaceNav'
 import {
   isNativeMobile,
   setStatusBarStyle,
@@ -109,6 +112,8 @@ function App() {
             <InputArea />
           </>
         )}
+        {mainView === 'system' && <SystemView />}
+        {mainView === 'workspace' && <WorkspaceView />}
         {mainView === 'skill-detail' && <SkillDetailView />}
         {mainView === 'cron-detail' && <CronJobDetailView />}
         {mainView === 'create-cron' && <CreateCronJobView />}
@@ -118,6 +123,7 @@ function App() {
         {mainView === 'server-settings' && <ServerSettingsView />}
         {mainView === 'usage' && <UsageView />}
         {mainView === 'pixel-dashboard' && <AgentDashboard />}
+        {isNativeMobile() && <MobileSurfaceNav />}
       </main>
 
       <RightPanel />

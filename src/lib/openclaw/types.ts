@@ -6,6 +6,10 @@ export interface Message {
   content: string
   timestamp: string
   thinking?: string
+  rawContent?: string
+  attachments?: Array<{ type: string; mimeType: string; content: string }>
+  isToolResult?: boolean
+  toolCallId?: string
   mediaImages?: Array<{ url: string; alt?: string }>
 }
 

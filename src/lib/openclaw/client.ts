@@ -14,6 +14,7 @@ import * as agentsApi from './agents'
 import * as skillsApi from './skills'
 import * as cronApi from './cron-jobs'
 import * as configApi from './config'
+import * as featuresApi from './features'
 
 /** Matches internal system sessions that should never be treated as subagents. */
 const SYSTEM_SESSION_RE = /^agent:[^:]+:(main|cron)(:|$)/
@@ -861,5 +862,14 @@ export class OpenClawClient {
 
   async patchServerConfig(patch: object, baseHash: string): Promise<void> {
     return configApi.patchServerConfig(this.call.bind(this), patch, baseHash)
+  }
+
+  // Usage / status
+  async getUsageStatus(): Promise<any> {
+    return featuresApi.getUsageStatus(this.call.bind(this))
+  }
+
+  async getUsageCost(): Promise<any> {
+    return featuresApi.getUsageCost(this.call.bind(this))
   }
 }

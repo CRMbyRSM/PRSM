@@ -15,6 +15,11 @@ export function TopBar() {
     currentSessionId,
     connected,
     agentBusy,
+    isStreaming,
+    activeSubagents,
+    mainView,
+    openSystemView,
+    openWorkspaceView,
     setShowSettings,
     updateSessionLabel
   } = useStore()
@@ -94,7 +99,7 @@ export function TopBar() {
       </div>
 
       <div className="connection-status">
-        {connected && agentBusy ? (
+        {connected && (agentBusy || isStreaming) ? (
           <>
             <span className="status-dot busy" />
             <span className="status-text">Working...</span>
@@ -105,6 +110,16 @@ export function TopBar() {
             <span className="status-text">{safe(connected ? 'Connected' : 'Disconnected')}</span>
           </>
         )}
+      </div>
+
+      <div className="topbar-surface-jumps">
+        <button className={`surface-jump-btn ${mainView === 'system' ? 'active' : ''}`} onClick={openSystemView}>
+          <span className={`surface-jump-dot ${!connected ? 'critical' : isStreaming || agentBusy || activeSubagents.length > 0 ? 'warn' : 'ok'}`} />
+          System
+        </button>
+        <button className={`surface-jump-btn ${mainView === 'workspace' ? 'active' : ''}`} onClick={openWorkspaceView}>
+          Workspace
+        </button>
       </div>
 
       <div className="top-bar-actions">
