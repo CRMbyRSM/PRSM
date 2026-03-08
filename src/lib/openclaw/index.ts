@@ -3,7 +3,7 @@
 export { OpenClawClient } from './client'
 export { stripAnsi, stripThinkingTags, isToolResultMessage } from './utils'
 export { resolveToolDisplay, extractToolDetail } from './tool-display'
-export type { ToolIconType, ToolDisplay } from './tool-display'
+export type { ToolIconType, ToolDisplayInfo } from './tool-display'
 export type {
   Message,
   Session,
@@ -13,13 +13,10 @@ export type {
   SkillRequirements,
   SkillInstallOption,
   CronJob,
-  RpcCaller,
-  WebSocketLike,
-  WebSocketFactory
+  BridgeConfig
 } from './types'
 export type { CreateAgentParams, CreateAgentResult, DeleteAgentResult } from './agents'
 export { buildIdentityContent } from './agents'
-export { getServerConfig, patchServerConfig } from './config'
 export type { ClawHubSkill, ClawHubSort } from '../clawhub'
 
 // PRSM-specific re-exports for convenience

@@ -19,12 +19,9 @@ export function CreateCronJobView() {
         try {
             setLoading(true)
             setError(null)
-            await client.addCronJob({
-                name,
-                schedule,
-                content: scriptContent,
-                status: 'active'
-            })
+            // addCronJob not yet available via bridge — log warning
+            console.warn('[PRSM] addCronJob not yet available via bridge', { name, schedule, content: scriptContent })
+            throw new Error('Creating cron jobs is not yet available via the bridge')
             await fetchCronJobs()
             closeDetailView()
         } catch (err) {

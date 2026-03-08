@@ -1,15 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store'
-import { clearDeviceToken } from '../lib/device-identity'
 
 export function SettingsModal() {
   const {
-    serverUrl,
-    setServerUrl,
-    authMode,
-    setAuthMode,
-    gatewayToken,
-    setGatewayToken,
+    bridgeUrl,
+    setBridgeUrl,
+    bridgeToken,
+    setBridgeToken,
     showSettings,
     setShowSettings,
     connect,
@@ -24,9 +21,8 @@ export function SettingsModal() {
     setFontSize
   } = useStore()
 
-  const [url, setUrl] = useState(serverUrl)
-  const [mode, setMode] = useState(authMode)
-  const [token, setToken] = useState(gatewayToken)
+  const [url, setUrl] = useState(bridgeUrl)
+  const [token, setToken] = useState(bridgeToken)
   const [localUpdatePolicy, setLocalUpdatePolicy] = useState(updatePolicy)
   const [error, setError] = useState('')
 
@@ -35,9 +31,8 @@ export function SettingsModal() {
   const prevShowRef = useRef(false)
   useEffect(() => {
     if (showSettings && !prevShowRef.current) {
-      setUrl(serverUrl)
-      setMode(authMode)
-      setToken(gatewayToken)
+      setUrl(bridgeUrl)
+      setToken(bridgeToken)
       setLocalUpdatePolicy(updatePolicy)
       setError('')
     }
@@ -45,13 +40,15 @@ export function SettingsModal() {
   }, [showSettings])
 
   const normalizeUrl = (value: string): string => {
-    // Auto-convert http(s) to ws(s) for convenience
-    if (value.startsWith('https://')) return 'wss://' + value.slice(8)
-    if (value.startsWith('http://')) return 'ws://' + value.slice(7)
-    // If no protocol at all, assume wss:// for remote, ws:// for local
-    if (!value.startsWith('ws://') && !value.startsWith('wss://')) {
+    // Strip trailing slashes
+    value = value.replace(/\/+$/, '')
+    // Convert ws(s) to http(s) for bridge
+    if (value.startsWith('wss://')) return 'https://' + value.slice(6)
+    if (value.startsWith('ws://')) return 'http://' + value.slice(5)
+    // If no protocol at all, assume https:// for remote, http:// for local
+    if (!value.startsWith('http://') && !value.startsWith('https://')) {
       const isLocal = /^(localhost|127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(value)
-      return (isLocal ? 'ws://' : 'wss://') + value
+      return (isLocal ? 'http://' : 'https://') + value
     }
     return value
   }
@@ -59,8 +56,8 @@ export function SettingsModal() {
   const validateUrl = (value: string) => {
     try {
       const parsed = new URL(value)
-      if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
-        return 'URL must start with ws://, wss://, http://, or https://'
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return 'URL must start with http:// or https://'
       }
       return ''
     } catch {
@@ -71,13 +68,13 @@ export function SettingsModal() {
   const handleSave = async () => {
     setError('')
     // Read directly from DOM as fallback — Android WebView sometimes desyncs React state
-    const urlInput = document.getElementById('serverUrl') as HTMLInputElement
-    const tokenInput = document.getElementById('gatewayToken') as HTMLInputElement
+    const urlInput = document.getElementById('bridgeUrl') as HTMLInputElement
+    const tokenInput = document.getElementById('bridgeToken') as HTMLInputElement
     const rawUrl = (urlInput?.value || url).trim()
     const trimmedToken = (tokenInput?.value || token).trim()
 
     if (!rawUrl) {
-      setError('Server URL is required')
+      setError('Bridge URL is required')
       return
     }
 
@@ -92,18 +89,9 @@ export function SettingsModal() {
     // Disconnect any existing/stale connection before applying new settings
     disconnect()
 
-    setServerUrl(trimmedUrl)
-    setAuthMode(mode)
-    setGatewayToken(trimmedToken)
+    setBridgeUrl(trimmedUrl)
+    setBridgeToken(trimmedToken)
     setUpdatePolicy(localUpdatePolicy)
-
-    // Clear stored device token so the fresh gateway token is used immediately
-    try {
-      const host = new URL(trimmedUrl).host
-      await clearDeviceToken(host)
-    } catch {
-      // URL parsing failed or storage error — proceed anyway
-    }
 
     // Small delay to let disconnect + state settle before reconnecting
     await new Promise(r => setTimeout(r, 100))
@@ -114,7 +102,7 @@ export function SettingsModal() {
       setShowSettings(false)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Connection failed'
-      setError(`${msg}. Check URL, token, and that the server is reachable.`)
+      setError(`${msg}. Check URL, token, and that the bridge is reachable.`)
     }
   }
 
@@ -144,50 +132,29 @@ export function SettingsModal() {
 
         <div className="modal-body">
           <div className="form-group">
-            <label htmlFor="serverUrl">Server URL</label>
+            <label htmlFor="bridgeUrl">Bridge URL</label>
             <input
               type="text"
-              id="serverUrl"
+              id="bridgeUrl"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="your-tunnel.example.com or wss://..."
+              placeholder="http://your-server:8787"
               autoComplete="off"
             />
-            <span className="form-hint">Enter hostname, https://, or wss:// URL — auto-converts for you</span>
+            <span className="form-hint">Enter the PRSM Bridge URL (http:// or https://)</span>
           </div>
 
           <div className="form-group">
-            <label>Authentication Mode</label>
-            <div className="auth-mode-toggle">
-              <button
-                type="button"
-                className={`toggle-btn ${mode === 'token' ? 'active' : ''}`}
-                onClick={() => setMode('token')}
-              >
-                Token
-              </button>
-              <button
-                type="button"
-                className={`toggle-btn ${mode === 'password' ? 'active' : ''}`}
-                onClick={() => setMode('password')}
-              >
-                Password
-              </button>
-            </div>
-            <span className="form-hint">Choose based on your server's gateway.auth.mode setting.</span>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="gatewayToken">{mode === 'token' ? 'Gateway Token' : 'Gateway Password'}</label>
+            <label htmlFor="bridgeToken">Bridge Token</label>
             <input
-              id="gatewayToken"
+              id="bridgeToken"
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              placeholder={mode === 'token' ? 'Enter your gateway token' : 'Enter your gateway password'}
+              placeholder="Enter your bridge token"
               autoComplete="off"
             />
-            <span className="form-hint">Required if authentication is enabled on the server.</span>
+            <span className="form-hint">Required if authentication is enabled on the bridge.</span>
           </div>
 
           {error && <div className="form-error">{error}</div>}

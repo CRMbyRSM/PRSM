@@ -12,8 +12,33 @@ import { LocalNotifications } from '@capacitor/local-notifications'
 
 export type PlatformType = 'electron' | 'ios' | 'android' | 'web'
 
+export interface RuntimeInfo {
+  mode: 'desktop' | 'mobile' | 'web'
+  platform: string
+  bridgeAvailable: boolean
+  appVersion?: string
+  workspaceRoot?: string | null
+}
+
+export interface WorkspaceReadResult {
+  ok: boolean
+  path: string
+  content: string
+  missing: boolean
+}
+
+export interface WorkspaceWriteResult {
+  ok: boolean
+  path: string
+}
+
+function getElectronAPI(): Record<string, any> | undefined {
+  if (typeof window === 'undefined') return undefined
+  return (window as any).electronAPI
+}
+
 export function getPlatform(): PlatformType {
-  if (typeof window !== 'undefined' && (window as any).electronAPI) {
+  if (getElectronAPI()) {
     return 'electron'
   }
   const native = Capacitor.getPlatform()
@@ -212,6 +237,46 @@ export async function getConfig(): Promise<{ defaultUrl?: string; theme?: string
   }
 
   return {}
+}
+
+export function isDesktopBridgeAvailable(): boolean {
+  const api = getElectronAPI()
+  return Boolean(api?.getRuntimeInfo && api?.readWorkspaceFile && api?.writeWorkspaceFile)
+}
+
+export async function getRuntimeInfo(): Promise<RuntimeInfo> {
+  const platform = getPlatform()
+  const api = getElectronAPI()
+
+  if (platform === 'electron' && api?.getRuntimeInfo) {
+    return await api.getRuntimeInfo()
+  }
+
+  if (platform === 'ios' || platform === 'android') {
+    return {
+      mode: 'mobile',
+      platform,
+      bridgeAvailable: false
+    }
+  }
+
+  return {
+    mode: 'web',
+    platform,
+    bridgeAvailable: false
+  }
+}
+
+export async function readWorkspaceFile(path: string): Promise<WorkspaceReadResult | null> {
+  const api = getElectronAPI()
+  if (!api?.readWorkspaceFile) return null
+  return await api.readWorkspaceFile(path)
+}
+
+export async function writeWorkspaceFile(path: string, content: string): Promise<WorkspaceWriteResult | null> {
+  const api = getElectronAPI()
+  if (!api?.writeWorkspaceFile) return null
+  return await api.writeWorkspaceFile(path, content)
 }
 
 export async function isEncryptionAvailable(): Promise<boolean> {

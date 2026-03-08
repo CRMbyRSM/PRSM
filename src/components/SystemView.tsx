@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { formatDistanceToNow } from 'date-fns'
 import { safe } from '../lib/safe-render'
+import * as Platform from '../lib/platform'
 
 function formatNumber(n: number) {
   if (!Number.isFinite(n)) return '0'
@@ -45,12 +46,17 @@ export function SystemView() {
   const [usageStatus, setUsageStatus] = useState<any>(null)
   const [usageCost, setUsageCost] = useState<any>(null)
   const [configSnapshot, setConfigSnapshot] = useState<any>(null)
+  const [runtimeInfo, setRuntimeInfo] = useState<Platform.RuntimeInfo | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
   const loadSystemData = async () => {
-    if (!client) return
     setRefreshing(true)
     try {
+      const runtime = await Platform.getRuntimeInfo().catch(() => null)
+      setRuntimeInfo(runtime)
+
+      if (!client) return
+
       const [status, cost, config] = await Promise.all([
         client.getUsageStatus().catch(() => null),
         client.getUsageCost().catch(() => null),
@@ -104,6 +110,20 @@ export function SystemView() {
     const totalCost = daily.reduce((sum: number, day: any) => sum + (day.totalCost || 0), 0)
     return { totalTokens, totalCost, days: usageCost?.days || daily.length || 0 }
   }, [usageCost])
+
+  const runtimeSummary = useMemo(() => {
+    const mode = runtimeInfo?.mode || 'web'
+    const bridgeAvailable = Boolean(runtimeInfo?.bridgeAvailable)
+    const workspaceReady = Boolean(runtimeInfo?.workspaceRoot)
+    return {
+      mode,
+      bridgeAvailable,
+      workspaceReady,
+      platform: runtimeInfo?.platform || mode,
+      appVersion: runtimeInfo?.appVersion || 'unknown',
+      workspaceRoot: runtimeInfo?.workspaceRoot || null
+    }
+  }, [runtimeInfo])
 
   const providerAlerts = useMemo(() => {
     const providers = usageStatus?.providers || []
@@ -263,6 +283,22 @@ export function SystemView() {
             <Metric label="Agent state" value={agentBusy ? 'Working' : 'Idle'} tone={agentBusy ? 'warn' : 'ok'} />
             <Metric label="Streaming" value={isStreaming ? 'In progress' : 'Quiet'} tone={isStreaming ? 'warn' : 'neutral'} />
             <Metric label="Pinned context" value={String(pinnedMessages.length)} tone="neutral" />
+          </div>
+        </section>
+
+        <section className="surface-card">
+          <div className="surface-card-header">
+            <h2>Runtime & bridge</h2>
+            <span>{runtimeSummary.mode}</span>
+          </div>
+          <div className="metric-stack">
+            <Metric label="Mode" value={runtimeSummary.mode} tone={runtimeSummary.mode === 'desktop' ? 'ok' : 'neutral'} />
+            <Metric label="Bridge" value={runtimeSummary.bridgeAvailable ? 'Available' : 'Unavailable'} tone={runtimeSummary.bridgeAvailable ? 'ok' : 'warn'} />
+            <Metric label="Workspace root" value={runtimeSummary.workspaceReady ? 'Detected' : 'Not detected'} tone={runtimeSummary.workspaceReady ? 'ok' : 'warn'} />
+            <Metric label="Platform" value={runtimeSummary.platform} tone="neutral" />
+          </div>
+          <div className="surface-note">
+            {runtimeSummary.workspaceRoot ? safe(runtimeSummary.workspaceRoot) : `App version ${runtimeSummary.appVersion}`}
           </div>
         </section>
 

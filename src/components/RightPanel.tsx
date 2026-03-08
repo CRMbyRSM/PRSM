@@ -47,7 +47,7 @@ export function RightPanel() {
     selectClawHubSkill,
     selectedClawHubSkill,
     pinnedMessages,
-    currentSessionId,
+    currentSessionId: _currentSessionId,
     unpinMessage
   } = useStore()
 

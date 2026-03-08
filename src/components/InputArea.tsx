@@ -235,7 +235,7 @@ export function InputArea() {
       }
       img.onerror = () => {
         // Fallback: return the original if compression fails
-        resolve({ dataUrl, mimeType })
+        resolve({ dataUrl, mimeType: _mimeType })
       }
       img.src = dataUrl
     })

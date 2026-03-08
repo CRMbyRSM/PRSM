@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile, stripThinkingTags, CreateAgentParams, buildIdentityContent } from '../lib/openclaw'
+import { OpenClawClient, Message, Session, Agent, Skill, CronJob, AgentFile, stripThinkingTags, CreateAgentParams } from '../lib/openclaw'
 import type { ClawHubSkill, ClawHubSort } from '../lib/clawhub'
 import { listClawHubSkills, searchClawHub, getClawHubSkill, getClawHubSkillVersion, getClawHubSkillConvex } from '../lib/clawhub'
 import * as Platform from '../lib/platform'
@@ -35,13 +35,13 @@ interface AgentDetail {
 }
 
 export interface PinnedMessage {
-  id: string            // unique pin id
-  sessionId: string     // which session it belongs to
-  messageId: string     // original message id
-  content: string       // copy of message content
+  id: string
+  sessionId: string
+  messageId: string
+  content: string
   role: 'user' | 'assistant' | 'system'
-  timestamp: string     // original message timestamp
-  pinnedAt: string      // when it was pinned
+  timestamp: string
+  pinnedAt: string
   attachments?: Array<{ type: string; mimeType: string; content: string }>
 }
 
@@ -52,12 +52,10 @@ interface AppState {
   toggleTheme: () => void
 
   // Connection
-  serverUrl: string
-  setServerUrl: (url: string) => void
-  authMode: 'token' | 'password'
-  setAuthMode: (mode: 'token' | 'password') => void
-  gatewayToken: string
-  setGatewayToken: (token: string) => void
+  bridgeUrl: string
+  setBridgeUrl: (url: string) => void
+  bridgeToken: string
+  setBridgeToken: (token: string) => void
   connected: boolean
   connecting: boolean
   client: OpenClawClient | null
@@ -65,12 +63,6 @@ interface AppState {
   // Settings Modal
   showSettings: boolean
   setShowSettings: (show: boolean) => void
-
-  // Certificate Error Modal
-  showCertError: boolean
-  certErrorUrl: string | null
-  showCertErrorModal: (httpsUrl: string) => void
-  hideCertErrorModal: () => void
 
   // UI State
   sidebarOpen: boolean
@@ -123,7 +115,7 @@ interface AppState {
   compactingSession: string | null
 
   // Display Settings
-  fontSize: number // percentage: 80, 90, 100, 110, 120, 130
+  fontSize: number
   setFontSize: (size: number) => void
 
   // STT Settings
@@ -188,7 +180,7 @@ interface AppState {
   installClawHubSkill: (slug: string) => Promise<void>
   fetchClawHubSkillDetail: (slug: string) => Promise<void>
 
-  // Pinned Messages (local-only, persisted)
+  // Pinned Messages
   pinnedMessages: PinnedMessage[]
   pinMessage: (sessionId: string, message: Message) => void
   unpinMessage: (pinId: string) => void
@@ -224,12 +216,6 @@ interface AppState {
 let _subagentPollTimer: ReturnType<typeof setInterval> | null = null
 let _baselineSessionKeys: Set<string> | null = null
 
-/**
- * If the last message is a streaming placeholder (id starts with "streaming-"),
- * finalize it with a stable ID so that subsequent tool calls / subagents can
- * reference it via `afterMessageId`, and new stream chunks will create a fresh
- * streaming message instead of appending to the finalized one.
- */
 function finalizeStreamingMessage(messages: Message[]): { messages: Message[]; finalizedId: string | null } {
   if (messages.length === 0) return { messages, finalizedId: null }
   const last = messages[messages.length - 1]
@@ -261,13 +247,11 @@ export const useStore = create<AppState>()(
       toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
 
       // Connection
-      serverUrl: '',
-      setServerUrl: (url) => set({ serverUrl: url }),
-      authMode: 'token',
-      setAuthMode: (mode) => set({ authMode: mode }),
-      gatewayToken: '',
-      setGatewayToken: (token) => {
-        set({ gatewayToken: token })
+      bridgeUrl: '',
+      setBridgeUrl: (url) => set({ bridgeUrl: url }),
+      bridgeToken: '',
+      setBridgeToken: (token) => {
+        set({ bridgeToken: token })
         Platform.saveToken(token).catch(() => {})
       },
       connected: false,
@@ -277,12 +261,6 @@ export const useStore = create<AppState>()(
       // Settings Modal
       showSettings: false,
       setShowSettings: (show) => set({ showSettings: show }),
-
-      // Certificate Error Modal
-      showCertError: false,
-      certErrorUrl: null,
-      showCertErrorModal: (httpsUrl) => set({ showCertError: true, certErrorUrl: httpsUrl }),
-      hideCertErrorModal: () => set({ showCertError: false, certErrorUrl: null }),
 
       // UI State
       sidebarOpen: false,
@@ -316,49 +294,32 @@ export const useStore = create<AppState>()(
       selectedCronJob: null,
       selectedAgentDetail: null,
       selectSkill: async (skill) => {
-        // All skill data comes from skills.status, no need for separate fetch
         set({ mainView: 'skill-detail', selectedSkill: skill, selectedCronJob: null, selectedAgentDetail: null })
       },
       selectCronJob: async (cronJob) => {
         const { client } = get()
         set({ mainView: 'cron-detail', selectedCronJob: cronJob, selectedSkill: null, selectedAgentDetail: null })
-
-        // Fetch full cron job details including content
         if (client) {
           const details = await client.getCronJobDetails(cronJob.id)
-          if (details) {
-            set({ selectedCronJob: details })
-          }
+          if (details) set({ selectedCronJob: details })
         }
       },
       selectAgentForDetail: async (agent) => {
         const { client } = get()
         set({ mainView: 'agent-detail', selectedAgentDetail: { agent, workspace: '', files: [] }, selectedSkill: null, selectedCronJob: null })
-
         if (client) {
-          // Fetch workspace files
           const filesResult = await client.getAgentFiles(agent.id)
           if (filesResult) {
-            // Fetch content for each file
             const filesWithContent: AgentFile[] = []
             for (const file of filesResult.files) {
               if (!file.missing) {
                 const fileContent = await client.getAgentFile(agent.id, file.name)
-                filesWithContent.push({
-                  ...file,
-                  content: fileContent?.content
-                })
+                filesWithContent.push({ ...file, content: fileContent?.content })
               } else {
                 filesWithContent.push(file)
               }
             }
-            set({
-              selectedAgentDetail: {
-                agent,
-                workspace: filesResult.workspace,
-                files: filesWithContent
-              }
-            })
+            set({ selectedAgentDetail: { agent, workspace: filesResult.workspace, files: filesWithContent } })
           }
         }
       },
@@ -379,127 +340,38 @@ export const useStore = create<AppState>()(
       createAgent: async (params) => {
         const { client } = get()
         if (!client) return { success: false, error: 'Not connected' }
-
         try {
-          const result = await client.createAgent({
-            name: params.name,
-            workspace: params.workspace,
-            model: params.model
-          })
-
-          if (!result?.ok) {
-            return { success: false, error: 'Server returned an error' }
-          }
-
-          const agentId = result.agentId
-          const needsIdentity = params.name || params.emoji || params.avatar
-
-          // Wait for reconnect after config.patch triggers server restart
-          await new Promise<void>((resolve) => {
-            let resolved = false
-            const onConnected = () => {
-              if (resolved) return
-              resolved = true
-              client.off('connected', onConnected)
-              resolve()
-            }
-            client.on('connected', onConnected)
-            setTimeout(() => {
-              if (!resolved) {
-                resolved = true
-                client.off('connected', onConnected)
-                resolve()
-              }
-            }, 15000)
-          })
-
-          // Write IDENTITY.md
-          if (needsIdentity) {
-            const content = buildIdentityContent({
-              name: params.name,
-              emoji: params.emoji,
-              avatar: params.avatar,
-              agentId,
-              avatarFileName: params.avatarFileName
-            })
-            try {
-              await client.setAgentFile(agentId, 'IDENTITY.md', content)
-            } catch {
-              // Failed to write IDENTITY.md
-            }
-
-            if (params.avatar && params.avatarFileName && params.avatar.startsWith('data:')) {
-              try {
-                const base64Content = params.avatar.replace(/^data:[^;]+;base64,/, '')
-                const avatarPath = `avatars/${agentId}/${params.avatarFileName}`
-                await client.setAgentFile(agentId, avatarPath, base64Content)
-              } catch {
-                // Failed to write avatar file
-              }
-            }
-          }
-
+          const result = await client.createAgent({ name: params.name, workspace: params.workspace, model: params.model })
+          if (!result?.ok) return { success: false, error: 'Server returned an error' }
           await get().fetchAgents()
-
-          const newAgent = get().agents.find(a => a.id === agentId)
+          const newAgent = get().agents.find(a => a.id === result.agentId)
           if (newAgent) {
-            set({ currentAgentId: agentId })
+            set({ currentAgentId: result.agentId })
             await get().selectAgentForDetail(newAgent)
           } else {
             set({ mainView: 'chat' })
           }
-
           return { success: true }
         } catch (err: any) {
           return { success: false, error: err?.message || 'Failed to create agent' }
         }
       },
-
       deleteAgent: async (agentId) => {
         const { client } = get()
         if (!client) return { success: false, error: 'Not connected' }
-
         try {
           const result = await client.deleteAgent(agentId)
-          if (!result?.ok) {
-            return { success: false, error: 'Server returned an error' }
-          }
-
-          // Wait for reconnect after config.patch triggers server restart
-          await new Promise<void>((resolve) => {
-            let resolved = false
-            const onConnected = () => {
-              if (resolved) return
-              resolved = true
-              client.off('connected', onConnected)
-              resolve()
-            }
-            client.on('connected', onConnected)
-            setTimeout(() => {
-              if (!resolved) {
-                resolved = true
-                client.off('connected', onConnected)
-                resolve()
-              }
-            }, 15000)
-          })
-
+          if (!result?.ok) return { success: false, error: 'Server returned an error' }
           const { currentAgentId, mainView, selectedAgentDetail } = get()
-          if (currentAgentId === agentId) {
-            set({ currentAgentId: 'main' })
-          }
-
+          if (currentAgentId === agentId) set({ currentAgentId: 'main' })
           if (mainView === 'agent-detail' && selectedAgentDetail?.agent.id === agentId) {
             set({ mainView: 'chat', selectedAgentDetail: null })
           }
-
           await get().fetchAgents()
-
           const { agents, currentAgentId: newAgentId } = get()
           if (newAgentId === agentId || !agents.some(a => a.id === newAgentId)) {
             set({ currentAgentId: agents[0]?.id || 'main' })
           }
-
           return { success: true }
         } catch (err: any) {
           return { success: false, error: err?.message || 'Failed to delete agent' }
@@ -508,26 +380,17 @@ export const useStore = create<AppState>()(
       toggleSkillEnabled: async (skillId, enabled) => {
         const { client } = get()
         if (!client) return
-
         await client.toggleSkill(skillId, enabled)
-
-        // Update local state
         set((state) => ({
-          skills: state.skills.map((s) =>
-            s.id === skillId ? { ...s, enabled } : s
-          ),
-          selectedSkill: state.selectedSkill?.id === skillId
-            ? { ...state.selectedSkill, enabled }
-            : state.selectedSkill
+          skills: state.skills.map((s) => s.id === skillId ? { ...s, enabled } : s),
+          selectedSkill: state.selectedSkill?.id === skillId ? { ...state.selectedSkill, enabled } : state.selectedSkill
         }))
       },
       saveAgentFile: async (agentId, fileName, content) => {
         const { client } = get()
         if (!client) return false
-
         const success = await client.setAgentFile(agentId, fileName, content)
         if (success) {
-          // Update local state
           set((state) => {
             if (!state.selectedAgentDetail) return state
             return {
@@ -539,8 +402,6 @@ export const useStore = create<AppState>()(
               }
             }
           })
-
-          // Refresh agents list to update identity
           await get().fetchAgents()
         }
         return success
@@ -548,28 +409,18 @@ export const useStore = create<AppState>()(
       refreshAgentFiles: async (agentId) => {
         const { client, selectedAgentDetail } = get()
         if (!client || !selectedAgentDetail) return
-
         const filesResult = await client.getAgentFiles(agentId)
         if (filesResult) {
           const filesWithContent: AgentFile[] = []
           for (const file of filesResult.files) {
             if (!file.missing) {
               const fileContent = await client.getAgentFile(agentId, file.name)
-              filesWithContent.push({
-                ...file,
-                content: fileContent?.content
-              })
+              filesWithContent.push({ ...file, content: fileContent?.content })
             } else {
               filesWithContent.push(file)
             }
           }
-          set({
-            selectedAgentDetail: {
-              ...selectedAgentDetail,
-              workspace: filesResult.workspace,
-              files: filesWithContent
-            }
-          })
+          set({ selectedAgentDetail: { ...selectedAgentDetail, workspace: filesResult.workspace, files: filesWithContent } })
         }
       },
 
@@ -633,17 +484,13 @@ export const useStore = create<AppState>()(
       setPendingSessionLabel: (label) => set({ pendingSessionLabel: label }),
       setCurrentSession: (sessionId) => {
         const { currentSessionId, unreadCounts, mainView } = get()
-
-        // If re-selecting the current session, just ensure we're in chat view
         if (sessionId === currentSessionId) {
           if (mainView !== 'chat') {
             set({ mainView: 'chat', selectedSkill: null, selectedCronJob: null, selectedAgentDetail: null, selectedClawHubSkill: null })
           }
           return
         }
-
         const { [sessionId]: _, ...restCounts } = unreadCounts
-        // Clear default session key when switching (parent set preserved for concurrent streams)
         get().client?.setPrimarySessionKey(null)
         get().stopSubagentPolling()
         set({
@@ -652,23 +499,19 @@ export const useStore = create<AppState>()(
           unreadCounts: restCounts,
           activeToolCalls: [],
           activeSubagents: [],
-          // Always switch back to chat view when selecting a session
           mainView: 'chat',
           selectedSkill: null,
           selectedCronJob: null,
           selectedAgentDetail: null,
           selectedClawHubSkill: null
         })
-        // Load session messages
         get().client?.getSessionMessages(sessionId).then((result) => {
-          // Only apply if we're still on this session (prevent stale overwrites)
           if (get().currentSessionId === sessionId) {
             set({ messages: deepSanitize(result.messages) })
           }
         })
       },
       createNewSession: async () => {
-        // Don't create local fake session IDs. New sessions are created by the server on first send.
         set({
           currentSessionId: null,
           messages: [],
@@ -687,20 +530,12 @@ export const useStore = create<AppState>()(
       },
       updateSessionLabel: async (sessionId, label) => {
         const { client } = get()
-        if (!client) {
-          console.error('[PRSM] updateSessionLabel: no client')
-          return
-        }
-
+        if (!client) return
         try {
-          console.log('[PRSM] Renaming session', sessionId, 'to', label)
           await client.updateSession(sessionId, { label })
           set((state) => ({
-            sessions: state.sessions.map((s) =>
-              s.id === sessionId ? { ...s, title: label } : s
-            )
+            sessions: state.sessions.map((s) => s.id === sessionId ? { ...s, title: label } : s)
           }))
-          console.log('[PRSM] Session renamed successfully')
         } catch (err) {
           console.error('[PRSM] updateSessionLabel failed:', err)
         }
@@ -708,15 +543,12 @@ export const useStore = create<AppState>()(
       spawnSubagentSession: async (agentId, prompt) => {
         const { client } = get()
         if (!client) return
-
         const session = await client.spawnSession(agentId, prompt)
         set((state) => ({
           sessions: [session, ...state.sessions],
           currentSessionId: session.id,
           messages: []
         }))
-
-        // Load any existing messages for the spawned session
         const result = await client.getSessionMessages(session.id)
         if (result.messages.length > 0) {
           set({ messages: deepSanitize(result.messages) })
@@ -755,9 +587,7 @@ export const useStore = create<AppState>()(
             _clawHubStatsCache.set(s.slug, { downloads: s.downloads, stars: s.stars })
           }
           set({ clawHubSkills: skills })
-        } catch {
-          // fetch failed
-        }
+        } catch { /* fetch failed */ }
         set({ clawHubLoading: false })
       },
       searchClawHubSkills: async (query: string) => {
@@ -777,9 +607,7 @@ export const useStore = create<AppState>()(
             return s
           })
           set({ clawHubSkills: skills })
-        } catch {
-          // search failed
-        }
+        } catch { /* search failed */ }
         set({ clawHubLoading: false })
       },
       setClawHubSort: (sort: ClawHubSort) => {
@@ -791,16 +619,13 @@ export const useStore = create<AppState>()(
       },
       installClawHubSkill: async (slug: string) => {
         set({ installingHubSkill: slug, installHubSkillError: null })
-
         const { client, currentSessionId } = get()
         if (!client) {
           set({ installHubSkillError: 'Not connected to server', installingHubSkill: null })
           return
         }
-
         try {
           await client.installHubSkill(slug, currentSessionId || undefined)
-
           const maxAttempts = 24
           const pollInterval = 5000
           for (let i = 0; i < maxAttempts; i++) {
@@ -825,7 +650,6 @@ export const useStore = create<AppState>()(
           set({ installingHubSkill: null, installHubSkillError: 'Install may still be running — check the chat for output' })
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Install failed'
-          console.error('[clawhub] Install failed:', msg)
           set({ installHubSkillError: msg, installingHubSkill: null })
         }
       },
@@ -836,9 +660,7 @@ export const useStore = create<AppState>()(
             getClawHubSkillConvex(slug)
           ])
           if (detail && get().selectedClawHubSkill?.slug === slug) {
-            if (convexData?.vtAnalysis) {
-              detail.vtAnalysis = convexData.vtAnalysis
-            }
+            if (convexData?.vtAnalysis) detail.vtAnalysis = convexData.vtAnalysis
             set({ selectedClawHubSkill: detail })
             if (detail.downloads > 0 || detail.stars > 0) {
               _clawHubStatsCache.set(slug, { downloads: detail.downloads, stars: detail.stars })
@@ -856,18 +678,14 @@ export const useStore = create<AppState>()(
               }
             }
           }
-        } catch {
-          // detail fetch failed - keep the list data
-        }
+        } catch { /* detail fetch failed */ }
       },
 
       // Agent Busy & Message Queue
       agentBusy: false,
       messageQueue: [],
       removeFromQueue: (id) => {
-        set((state) => ({
-          messageQueue: state.messageQueue.filter((m) => m.id !== id)
-        }))
+        set((state) => ({ messageQueue: state.messageQueue.filter((m) => m.id !== id) }))
       },
 
       // Pinned Messages
@@ -884,14 +702,10 @@ export const useStore = create<AppState>()(
           pinnedAt: new Date().toISOString(),
           attachments: message.attachments
         }
-        set((state) => ({
-          pinnedMessages: [...state.pinnedMessages, pin]
-        }))
+        set((state) => ({ pinnedMessages: [...state.pinnedMessages, pin] }))
       },
       unpinMessage: (pinId) => {
-        set((state) => ({
-          pinnedMessages: state.pinnedMessages.filter((p) => p.id !== pinId)
-        }))
+        set((state) => ({ pinnedMessages: state.pinnedMessages.filter((p) => p.id !== pinId) }))
       },
       isPinned: (sessionId, messageId) => {
         return get().pinnedMessages.some((p) => p.sessionId === sessionId && p.messageId === messageId)
@@ -915,13 +729,13 @@ export const useStore = create<AppState>()(
         get().stopSubagentPolling()
       },
       openSubagentPopout: (sessionKey: string) => {
-        const { serverUrl, gatewayToken, authMode, activeSubagents } = get()
+        const { bridgeUrl, bridgeToken, activeSubagents } = get()
         const subagent = activeSubagents.find(a => a.sessionKey === sessionKey)
         Platform.openSubagentPopout({
           sessionKey,
-          serverUrl,
-          authToken: gatewayToken,
-          authMode,
+          serverUrl: bridgeUrl,
+          authToken: bridgeToken,
+          authMode: 'token',
           label: subagent?.label || sessionKey
         })
       },
@@ -929,38 +743,28 @@ export const useStore = create<AppState>()(
         const { activeToolCalls } = get()
         const toolCall = activeToolCalls.find(t => t.toolCallId === toolCallId)
         if (!toolCall) return
-
         try {
           localStorage.setItem(`toolcall-${toolCallId}`, JSON.stringify(toolCall))
-        } catch { /* storage full — ignore */ }
-
+        } catch { /* storage full */ }
         Platform.openToolCallPopout({ toolCallId, name: toolCall.name })
       },
       startSubagentPolling: () => {
         const { client, sessions } = get()
         if (!client || _subagentPollTimer) return
-
-        // Snapshot current session keys as baseline
         _baselineSessionKeys = new Set(sessions.map(s => s.key || s.id))
-
         _subagentPollTimer = setInterval(async () => {
           const { client: c, currentSessionId } = get()
           if (!c) return
-
           try {
             const allSessions = await c.listSessions()
             const newSubagents: SubagentInfo[] = []
-
             for (const s of allSessions) {
               const key = s.key || s.id
               if (_baselineSessionKeys?.has(key)) continue
-
               const isSubagent = s.spawned === true || s.parentSessionId === currentSessionId
               if (!isSubagent) continue
-
               const { activeSubagents } = get()
               if (activeSubagents.some(a => a.sessionKey === key)) continue
-
               newSubagents.push({
                 sessionKey: key,
                 label: s.title || key,
@@ -968,23 +772,14 @@ export const useStore = create<AppState>()(
                 startedAt: Date.now()
               })
             }
-
             if (newSubagents.length > 0) {
               set((state) => {
                 const { messages: finalizedMsgs, finalizedId } = finalizeStreamingMessage(state.messages)
-                const tagged = newSubagents.map(sa => ({
-                  ...sa,
-                  afterMessageId: finalizedId || undefined
-                }))
-                return {
-                  messages: finalizedMsgs,
-                  activeSubagents: [...state.activeSubagents, ...tagged]
-                }
+                const tagged = newSubagents.map(sa => ({ ...sa, afterMessageId: finalizedId || undefined }))
+                return { messages: finalizedMsgs, activeSubagents: [...state.activeSubagents, ...tagged] }
               })
             }
-          } catch {
-            // Polling failure — ignore
-          }
+          } catch { /* polling failure */ }
         }, 2000)
       },
       stopSubagentPolling: () => {
@@ -993,8 +788,6 @@ export const useStore = create<AppState>()(
           _subagentPollTimer = null
         }
         _baselineSessionKeys = null
-
-        // Mark all running subagents as completed
         set((state) => ({
           activeSubagents: state.activeSubagents.map(a =>
             a.status === 'running' ? { ...a, status: 'completed' as const } : a
@@ -1005,10 +798,9 @@ export const useStore = create<AppState>()(
       // Actions
       initializeApp: async () => {
         try {
-          // Get config from platform (Electron, Capacitor, or web)
           const config = await Platform.getConfig().catch(() => ({ defaultUrl: '', theme: '' }))
-          if (!get().serverUrl && config.defaultUrl) {
-            set({ serverUrl: config.defaultUrl })
+          if (!get().bridgeUrl && config.defaultUrl) {
+            set({ bridgeUrl: config.defaultUrl })
           }
           if (config.theme) {
             set({ theme: config.theme as 'dark' | 'light' })
@@ -1017,40 +809,35 @@ export const useStore = create<AppState>()(
           // Load token from secure storage
           const secureToken = await Platform.getToken().catch(() => '')
           if (secureToken) {
-            set({ gatewayToken: secureToken })
+            set({ bridgeToken: secureToken })
           } else {
-            // Migration: if Zustand has a token from old localStorage but secure storage is empty,
-            // migrate it to secure storage
-            const legacyToken = get().gatewayToken
+            const legacyToken = get().bridgeToken
             if (legacyToken) {
               await Platform.saveToken(legacyToken).catch(() => {})
             }
           }
 
-          // Clean up legacy gatewayToken from localStorage
+          // Clean up legacy token from localStorage
           try {
             const raw = localStorage.getItem('clawcontrol-storage')
             if (raw) {
               const parsed = JSON.parse(raw)
-              if (parsed.state?.gatewayToken) {
-                delete parsed.state.gatewayToken
+              if (parsed.state?.bridgeToken) {
+                delete parsed.state.bridgeToken
                 localStorage.setItem('clawcontrol-storage', JSON.stringify(parsed))
               }
             }
           } catch { /* ignore */ }
 
-          // Show settings if no URL or token configured
-          const { serverUrl, gatewayToken } = get()
-          if (!serverUrl || !gatewayToken) {
+          const { bridgeUrl, bridgeToken } = get()
+          if (!bridgeUrl || !bridgeToken) {
             set({ showSettings: true })
             return
           }
 
-          // Auto-connect
           try {
             await get().connect()
           } catch {
-            // Show settings on connection failure
             set({ showSettings: true })
           }
         } catch (err) {
@@ -1060,24 +847,20 @@ export const useStore = create<AppState>()(
       },
 
       connect: async () => {
-        const { serverUrl, gatewayToken, client: existingClient, connecting } = get()
+        const { bridgeUrl, bridgeToken, client: existingClient, connecting } = get()
 
-        // Prevent concurrent connect() calls (React StrictMode fires effects twice)
         if (connecting) return
 
-        // Show settings if URL is not configured
-        if (!serverUrl) {
+        if (!bridgeUrl) {
           set({ showSettings: true })
           return
         }
 
-        // Disconnect existing client to prevent duplicate event handling
         if (existingClient) {
           existingClient.disconnect()
           set({ client: null })
         }
 
-        // Kill any stale client surviving across Vite HMR reloads
         const stale = (globalThis as any).__prsmClient as OpenClawClient | undefined
         if (stale && stale !== existingClient) {
           try { stale.disconnect() } catch { /* already closed */ }
@@ -1086,42 +869,29 @@ export const useStore = create<AppState>()(
         set({ connecting: true })
 
         try {
-          const { authMode } = get()
-          const client = new OpenClawClient(serverUrl, gatewayToken, authMode)
+          const client = new OpenClawClient(bridgeUrl, bridgeToken)
 
           // Set up event handlers
           client.on('message', (msgArg: unknown) => {
             const message = deepSanitize(msgArg as Message)
-
-            // Session filtering — drop messages from other sessions.
-            // When sessionKey is missing (heartbeats, compactions), fall back to
-            // streamingSessionId.  If STILL no key and we're viewing a specific
-            // session, drop the message — it belongs to a different session.
             const msgSessionKey = (message as any).sessionKey || get().streamingSessionId
             const { currentSessionId } = get()
             if (currentSessionId && (!msgSessionKey || msgSessionKey !== currentSessionId)) return
 
-            // Drop system messages — gateway restart notifications, exec completions, etc.
             const rawRole = String((message as any).role || '').toLowerCase()
             if (rawRole === 'system') return
 
-            // Also filter by content pattern — some system events arrive as assistant role
             const sysContent = typeof message.content === 'string' ? message.content : ''
             if (/^\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(sysContent) &&
                 /(?:GatewayRestart|Exec completed|config-apply|SIGUSR)/i.test(sysContent)) return
 
-            // Drop tool results when thinking toggle is off (matches webchat behavior).
-            // Check both the tagged isToolResult flag AND the raw role from the server,
-            // since the gateway sends tool results with role="toolresult" or "tool_result".
             const isTool = message.isToolResult
               || rawRole === 'tool' || rawRole === 'toolresult' || rawRole === 'tool_result' || rawRole === 'function'
               || !!(message as any).toolCallId || !!(message as any).tool_call_id
             if (!get().thinkingEnabled && isTool) return
 
             let replacedStreaming = false
-
             set((state) => {
-              // Replace streaming placeholder with the final server message
               const lastIdx = state.messages.length - 1
               const lastMsg = lastIdx >= 0 ? state.messages[lastIdx] : null
               if (lastMsg && lastMsg.role === 'assistant' && lastMsg.id.startsWith('streaming-')) {
@@ -1130,21 +900,13 @@ export const useStore = create<AppState>()(
                 messages[lastIdx] = message
                 return { messages, isStreaming: false }
               }
-
               const exists = state.messages.some(m => m.id === message.id)
               if (exists) {
-                return {
-                  messages: state.messages.map(m => m.id === message.id ? message : m),
-                  isStreaming: false
-                }
+                return { messages: state.messages.map(m => m.id === message.id ? message : m), isStreaming: false }
               }
-              return {
-                messages: [...state.messages, message as Message],
-                isStreaming: false
-              }
+              return { messages: [...state.messages, message as Message], isStreaming: false }
             })
 
-            // Only notify for non-streamed responses (streamEnd handles streamed ones)
             if (message.role === 'assistant' && !replacedStreaming) {
               const preview = message.content.slice(0, 100)
               const { notificationsEnabled, streamingSessionId: msgSession, currentSessionId: activeSession } = get()
@@ -1158,7 +920,6 @@ export const useStore = create<AppState>()(
             set({ connected: true, connecting: false })
           })
 
-          // Listen for session title updates (gateway auto-generates titles after first message)
           client.on('session', (payload: unknown) => {
             const data = payload as any
             if (!data) return
@@ -1178,23 +939,11 @@ export const useStore = create<AppState>()(
             get().stopSubagentPolling()
           })
 
-          // certError event removed — WebSocket API cannot distinguish cert errors
-          // from other failures; the old detection produced false positives
-
           client.on('streamStart', (payload: unknown) => {
             const { sessionKey } = (payload || {}) as { sessionKey?: string }
             const { currentSessionId, streamingSessionId: existingStream } = get()
-
-            // If we already know which session is streaming (set by sendMessage),
-            // use that as ground truth. Otherwise use the event's sessionKey.
             const streamSession = existingStream || sessionKey
-
-            // Drop events for sessions we're not viewing.
-            // When streamSession is unknown (no key at all), drop if we're in a session.
             if (currentSessionId && (!streamSession || streamSession !== currentSessionId)) return
-
-            // Save the streaming session so streamChunk/streamEnd can filter reliably
-            // even when individual chunks don't carry sessionKey
             set({
               isStreaming: true,
               hadStreamChunks: false,
@@ -1206,7 +955,6 @@ export const useStore = create<AppState>()(
           })
 
           client.on('streamChunk', (chunkArg: unknown) => {
-            // Defensive: ensure chunk is always a string no matter what the gateway sends
             let text: string
             let sessionKey: string | undefined
             if (typeof chunkArg === 'string') {
@@ -1220,53 +968,37 @@ export const useStore = create<AppState>()(
             }
             const kind = (chunkArg && typeof chunkArg === 'object') ? String((chunkArg as any).kind || '') : ''
 
-            // Strip MEDIA: lines from streaming text so they don't flash in the UI
             if (text.includes('MEDIA:')) {
               text = text.split('\n').filter(l => !/\bMEDIA:\s/i.test(l)).join('\n').trim()
             }
 
-            // Session filtering — use streamingSessionId (set by sendMessage or streamStart)
-            // as the reliable source; fall back to per-chunk sessionKey.
-            // Drop chunks with no identifiable session when we're viewing a specific session.
             const { currentSessionId, streamingSessionId } = get()
             const chunkSession = sessionKey || streamingSessionId
             if (currentSessionId && (!chunkSession || chunkSession !== currentSessionId)) return
-
-            // Skip empty chunks
             if (!text) return
 
             set((state) => {
               const messages = [...state.messages]
               const lastMessage = messages[messages.length - 1]
 
-              // Append to an active streaming placeholder
               if (lastMessage && lastMessage.role === 'assistant' && lastMessage.id.startsWith('streaming-')) {
                 const rawContent = kind === 'replace'
                   ? text
                   : (lastMessage.rawContent ?? lastMessage.content) + text
-
-                // Strip thinking tags from display content in real-time
                 const displayContent = stripThinkingTags(rawContent)
-
-                const updatedMessage = { ...lastMessage, content: displayContent, rawContent }
-                messages[messages.length - 1] = updatedMessage
+                messages[messages.length - 1] = { ...lastMessage, content: displayContent, rawContent }
                 return { messages, isStreaming: true, hadStreamChunks: true }
               } else if (lastMessage && lastMessage.role === 'assistant' && !state.thinkingEnabled) {
-                // When thinking is off, merge continuation chunks into the last assistant
-                // message rather than creating separate bubbles for each text segment
-                // between tool calls. This matches the webchat's single-bubble behavior.
                 const rawContent = (lastMessage.rawContent ?? lastMessage.content) + '\n\n' + text
                 const displayContent = stripThinkingTags(rawContent)
-                const updatedMessage = {
+                messages[messages.length - 1] = {
                   ...lastMessage,
                   id: `streaming-${Date.now()}`,
                   content: displayContent,
                   rawContent
                 }
-                messages[messages.length - 1] = updatedMessage
                 return { messages, isStreaming: true, hadStreamChunks: true }
               } else {
-                // Create new assistant placeholder
                 const displayContent = stripThinkingTags(text)
                 const newMessage: Message = {
                   id: `streaming-${Date.now()}`,
@@ -1285,7 +1017,6 @@ export const useStore = create<AppState>()(
             const { currentSessionId, streamingSessionId } = get()
             const endSession = sessionKey || streamingSessionId
             if (currentSessionId && (!endSession || endSession !== currentSessionId)) {
-              // Stream ended for a different session — clear streaming state if it was ours
               if (streamingSessionId && sessionKey === streamingSessionId) {
                 set({ isStreaming: false, streamingSessionId: null, hadStreamChunks: false, activeToolCalls: [] })
               }
@@ -1294,7 +1025,6 @@ export const useStore = create<AppState>()(
 
             const { messages, hadStreamChunks } = get()
 
-            // If streamEnd fires while we still have a streamingSessionId, the response completed
             if (streamingSessionId && hadStreamChunks) {
               const lastMsg = messages[messages.length - 1]
               if (lastMsg?.role === 'assistant') {
@@ -1304,13 +1034,9 @@ export const useStore = create<AppState>()(
                   Platform.showNotification('Agent responded', preview).catch(() => {})
                 }
               }
-
               if (streamingSessionId !== currentSessionId) {
                 set((state) => ({
-                  unreadCounts: {
-                    ...state.unreadCounts,
-                    [streamingSessionId]: (state.unreadCounts[streamingSessionId] || 0) + 1
-                  }
+                  unreadCounts: { ...state.unreadCounts, [streamingSessionId]: (state.unreadCounts[streamingSessionId] || 0) + 1 }
                 }))
               }
             }
@@ -1326,33 +1052,22 @@ export const useStore = create<AppState>()(
             }))
             get().stopSubagentPolling()
 
-            // Process queued messages
             const { messageQueue } = get()
             if (messageQueue.length > 0) {
               const next = messageQueue[0]
               set((state) => ({ messageQueue: state.messageQueue.slice(1) }))
-              // Defer send to next tick so state is settled
-              setTimeout(() => {
-                get().sendMessage(next.content, next.attachments).catch(() => {})
-              }, 100)
+              setTimeout(() => { get().sendMessage(next.content, next.attachments).catch(() => {}) }, 100)
             }
 
-            // Refresh sessions after stream ends — gateway may have auto-generated a title
-            setTimeout(() => {
-              get().fetchSessions().catch(() => {})
-            }, 1500)
+            setTimeout(() => { get().fetchSessions().catch(() => {}) }, 1500)
           })
 
-          // When the server reports the canonical session key during streaming,
-          // update local state so session lookups and history retrieval use the correct key.
           client.on('streamSessionKey', (payload: unknown) => {
             const { sessionKey } = payload as { runId: string; sessionKey: string }
             if (!sessionKey) return
-
             const { streamingSessionId, currentSessionId } = get()
             const oldKey = streamingSessionId || currentSessionId
             if (!oldKey || sessionKey === oldKey) return
-
             set((state) => {
               let renamed = false
               const sessions = state.sessions.reduce<typeof state.sessions>((acc, s) => {
@@ -1365,7 +1080,6 @@ export const useStore = create<AppState>()(
                 }
                 return acc
               }, [])
-
               return {
                 currentSessionId: state.currentSessionId === oldKey ? sessionKey : state.currentSessionId,
                 streamingSessionId: state.streamingSessionId === oldKey ? sessionKey : state.streamingSessionId,
@@ -1378,23 +1092,13 @@ export const useStore = create<AppState>()(
             const tc = payload as { toolCallId: string; name: string; phase: string; result?: string; args?: Record<string, unknown>; sessionKey?: string }
             const { currentSessionId: csid } = get()
             if (csid && (!tc.sessionKey || tc.sessionKey !== csid)) return
-
             set((state) => {
               const idx = state.activeToolCalls.findIndex(t => t.toolCallId === tc.toolCallId)
               if (idx >= 0) {
                 const updated = [...state.activeToolCalls]
-                updated[idx] = {
-                  ...updated[idx],
-                  phase: tc.phase as 'start' | 'result',
-                  result: tc.result,
-                  // Preserve args from start phase; merge if provided on result
-                  args: tc.args || updated[idx].args
-                }
+                updated[idx] = { ...updated[idx], phase: tc.phase as 'start' | 'result', result: tc.result, args: tc.args || updated[idx].args }
                 return { activeToolCalls: updated }
               }
-
-              // New tool call: finalize the current streaming message so subsequent
-              // stream chunks create a new bubble, and link this tool call to it.
               const { messages: finalizedMsgs, finalizedId } = finalizeStreamingMessage(state.messages)
               return {
                 messages: finalizedMsgs,
@@ -1411,33 +1115,21 @@ export const useStore = create<AppState>()(
             })
           })
 
-          // Agent presence/status — gateway broadcasts when the agent becomes busy or idle
           client.on('agentStatus', (payload: unknown) => {
             if (!payload || typeof payload !== 'object') return
             const data = payload as any
-            // Handle various payload shapes from the gateway
             let busy = false
-            if (data.status === 'busy' || data.status === 'working') {
-              busy = true
-            } else if (data.busy === true) {
-              busy = true
-            } else if (Array.isArray(data.presence)) {
-              busy = data.presence.some((p: any) => p.status === 'busy' || p.status === 'working')
-            } else if (data.status === 'idle' || data.status === 'online' || data.busy === false) {
-              busy = false
-            }
+            if (data.status === 'busy' || data.status === 'working') busy = true
+            else if (data.busy === true) busy = true
+            else if (Array.isArray(data.presence)) busy = data.presence.some((p: any) => p.status === 'busy' || p.status === 'working')
             set({ agentBusy: busy })
           })
 
-          // Event-driven subagent detection: when the client's session filter
-          // blocks an event from a different session, it emits this.
           client.on('subagentDetected', (payload: unknown) => {
             const { sessionKey } = payload as { sessionKey: string }
             if (!sessionKey) return
-
             set((state) => {
               if (state.activeSubagents.some(a => a.sessionKey === sessionKey)) return state
-
               const { messages: finalizedMsgs, finalizedId } = finalizeStreamingMessage(state.messages)
               return {
                 messages: finalizedMsgs,
@@ -1453,22 +1145,16 @@ export const useStore = create<AppState>()(
           })
 
           client.on('thinkingChunk', (payload: unknown) => {
-            const { text, cumulative, sessionKey } = payload as {
-              text: string; cumulative: boolean; sessionKey?: string
-            }
+            const { text, cumulative, sessionKey } = payload as { text: string; cumulative: boolean; sessionKey?: string }
             const { currentSessionId } = get()
             const resolvedKey = sessionKey || currentSessionId
             if (!resolvedKey) return
-
             const isCurrentSession = !sessionKey || !currentSessionId || sessionKey === currentSessionId
             if (!isCurrentSession) return
-
             set((state) => {
               const prev = state.streamingThinking[resolvedKey] || ''
               const next = cumulative ? text : prev + text
-              return {
-                streamingThinking: { ...state.streamingThinking, [resolvedKey]: next }
-              }
+              return { streamingThinking: { ...state.streamingThinking, [resolvedKey]: next } }
             })
           })
 
@@ -1477,7 +1163,6 @@ export const useStore = create<AppState>()(
             const { currentSessionId } = get()
             const resolvedKey = sessionKey || currentSessionId
             if (!resolvedKey) return
-
             if (phase === 'start') {
               set({ compactingSession: resolvedKey })
             } else if (phase === 'end') {
@@ -1499,7 +1184,7 @@ export const useStore = create<AppState>()(
             get().fetchCronJobs()
           ])
 
-          // Auto-select the most recent session if none is selected
+          // Auto-select the most recent session
           const { currentSessionId: currentId, sessions: loadedSessions } = get()
           if (!currentId && loadedSessions.length > 0) {
             const topSession = loadedSessions[0]
@@ -1529,7 +1214,6 @@ export const useStore = create<AppState>()(
         const { client, currentSessionId, currentAgentId, isStreaming: currentlyStreaming } = get()
         if (!client || (!content.trim() && (!attachments || attachments.length === 0))) return
 
-        // Queue the message if agent is currently streaming a response
         if (currentlyStreaming) {
           const queueItem = {
             id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1545,48 +1229,29 @@ export const useStore = create<AppState>()(
         const requestedSessionId = selectedSessionId || `session-${Date.now()}`
         const now = new Date().toISOString()
 
-        // For a brand-new chat, add a placeholder session immediately.
         if (!selectedSessionId) {
           set((state) => {
             if (state.sessions.some((s) => s.id === requestedSessionId)) {
               return { currentSessionId: requestedSessionId }
             }
-
             return {
               currentSessionId: requestedSessionId,
-              sessions: [
-                {
-                  id: requestedSessionId,
-                  key: requestedSessionId,
-                  title: state.pendingSessionLabel || 'New Chat',
-                  agentId: currentAgentId || undefined,
-                  createdAt: now,
-                  updatedAt: now
-                },
-                ...state.sessions
-              ]
+              sessions: [{
+                id: requestedSessionId,
+                key: requestedSessionId,
+                title: state.pendingSessionLabel || 'New Chat',
+                agentId: currentAgentId || undefined,
+                createdAt: now,
+                updatedAt: now
+              }, ...state.sessions]
             }
           })
         }
 
-        // Pre-seed the primary session filter so subagent events are dropped
         client.setPrimarySessionKey(requestedSessionId)
-
-        // Reset streaming state so user can always send follow-up messages
-        // Keep activeSubagents so previous subagent blocks stay visible in chat
-        set({
-          isStreaming: false,
-          hadStreamChunks: false,
-          activeToolCalls: [],
-          streamingSessionId: requestedSessionId
-        })
-
-        // Start subagent polling — the client's session filter will emit
-        // 'subagentDetected' for events from other sessions, and polling
-        // catches subagents that don't emit events at all.
+        set({ isStreaming: false, hadStreamChunks: false, activeToolCalls: [], streamingSessionId: requestedSessionId })
         get().startSubagentPolling()
 
-        // Add user message immediately (with attachment thumbnails if present)
         const userMessage: Message = {
           id: Date.now().toString(),
           role: 'user',
@@ -1596,7 +1261,6 @@ export const useStore = create<AppState>()(
         }
         set((state) => ({ messages: [...state.messages, userMessage] }))
 
-        // Send to server
         try {
           const response = await client.sendMessage({
             sessionId: requestedSessionId,
@@ -1611,64 +1275,41 @@ export const useStore = create<AppState>()(
           set((state) => {
             const replacementId = selectedSessionId || requestedSessionId
             const serverIdx = state.sessions.findIndex((s) => s.id === serverKey)
-
             if (serverIdx >= 0) {
               const dedupedSessions = replacementId !== serverKey
                 ? state.sessions.filter((s) => s.id !== replacementId)
                 : state.sessions
-              return {
-                currentSessionId: serverKey,
-                streamingSessionId: serverKey,
-                sessions: dedupedSessions
-              }
+              return { currentSessionId: serverKey, streamingSessionId: serverKey, sessions: dedupedSessions }
             }
-
             const replaceIdx = state.sessions.findIndex((s) => s.id === replacementId)
             if (replaceIdx >= 0) {
               const sessionsCopy = [...state.sessions]
-              sessionsCopy[replaceIdx] = {
-                ...sessionsCopy[replaceIdx],
-                id: serverKey,
-                key: serverKey,
-                updatedAt: now
-              }
-
-              return {
-                currentSessionId: serverKey,
-                streamingSessionId: serverKey,
-                sessions: sessionsCopy
-              }
+              sessionsCopy[replaceIdx] = { ...sessionsCopy[replaceIdx], id: serverKey, key: serverKey, updatedAt: now }
+              return { currentSessionId: serverKey, streamingSessionId: serverKey, sessions: sessionsCopy }
             }
-
             return {
               currentSessionId: serverKey,
               streamingSessionId: serverKey,
-              sessions: [
-                {
-                  id: serverKey,
-                  key: serverKey,
-                  title: 'New Chat',
-                  agentId: currentAgentId || undefined,
-                  createdAt: now,
-                  updatedAt: now
-                },
-                ...state.sessions
-              ]
+              sessions: [{
+                id: serverKey,
+                key: serverKey,
+                title: 'New Chat',
+                agentId: currentAgentId || undefined,
+                createdAt: now,
+                updatedAt: now
+              }, ...state.sessions]
             }
           })
 
-          // Apply pending session label if set
           const pendingLabel = get().pendingSessionLabel
           if (pendingLabel) {
             set({ pendingSessionLabel: null })
             get().updateSessionLabel(serverKey, pendingLabel).catch(() => {})
           }
 
-          // Sync canonical titles/metadata from the server.
           get().fetchSessions().catch(() => {})
         } catch (err) {
           console.error('[PRSM] sendMessage failed:', err)
-          // If send fails, stop streaming state so UI remains usable.
           set({ isStreaming: false, streamingSessionId: null })
         }
       },
@@ -1677,9 +1318,7 @@ export const useStore = create<AppState>()(
         const { client } = get()
         if (!client) return
         const serverSessions = deepSanitize(await client.listSessions())
-
         set((state) => {
-          // Deduplicate server sessions by key to prevent duplicate React keys
           const seen = new Set<string>()
           const uniqueServerSessions = serverSessions.filter((s: Session) => {
             const key = s.key || s.id
@@ -1687,8 +1326,6 @@ export const useStore = create<AppState>()(
             seen.add(key)
             return true
           })
-
-          // Preserve local-only sessions (created but no message sent yet)
           const localOnly = state.sessions.filter(s => {
             const key = s.key || s.id
             return !seen.has(key) && key.startsWith('session-')
@@ -1722,11 +1359,11 @@ export const useStore = create<AppState>()(
       }
     }),
     {
-  name: 'clawcontrol-storage',
+      name: 'clawcontrol-storage',
       partialize: (state) => ({
         theme: state.theme,
-        serverUrl: state.serverUrl,
-        authMode: state.authMode,
+        bridgeUrl: state.bridgeUrl,
+        bridgeToken: state.bridgeToken,
         sidebarCollapsed: state.sidebarCollapsed,
         thinkingEnabled: state.thinkingEnabled,
         fontSize: state.fontSize,
@@ -1742,19 +1379,55 @@ export const useStore = create<AppState>()(
         if (state?.fontSize && state.fontSize !== 100) {
           document.documentElement.style.fontSize = `${state.fontSize}%`
         }
+
+        // One-time migration: old keys → new keys
+        try {
+          const raw = localStorage.getItem('clawcontrol-storage')
+          if (raw) {
+            const parsed = JSON.parse(raw)
+            const s = parsed?.state
+            if (s) {
+              let changed = false
+              // Migrate serverUrl → bridgeUrl
+              if (s.serverUrl && !s.bridgeUrl) {
+                let url = s.serverUrl as string
+                // Convert ws:// → http://, wss:// → https://
+                if (url.startsWith('ws://')) url = 'http://' + url.slice(5)
+                else if (url.startsWith('wss://')) url = 'https://' + url.slice(6)
+                s.bridgeUrl = url
+                delete s.serverUrl
+                changed = true
+              }
+              // Migrate gatewayToken → bridgeToken
+              if (s.gatewayToken && !s.bridgeToken) {
+                s.bridgeToken = s.gatewayToken
+                delete s.gatewayToken
+                changed = true
+              }
+              // Remove authMode
+              if (s.authMode !== undefined) {
+                delete s.authMode
+                changed = true
+              }
+              if (changed) {
+                localStorage.setItem('clawcontrol-storage', JSON.stringify(parsed))
+                // Apply migrated values to current state
+                if (state && s.bridgeUrl) (state as any).bridgeUrl = s.bridgeUrl
+                if (state && s.bridgeToken) (state as any).bridgeToken = s.bridgeToken
+              }
+            }
+          }
+        } catch { /* migration failed — user can re-enter settings */ }
       }
     }
   )
 )
 
-// Vite HMR: disconnect stale WebSocket connections when modules are hot-replaced.
-// Without this, old module versions keep processing events, causing duplicate streams.
+// Vite HMR: disconnect stale connections when modules are hot-replaced.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     const { client } = useStore.getState()
-    if (client) {
-      client.disconnect()
-    }
+    if (client) client.disconnect()
   })
 }
 

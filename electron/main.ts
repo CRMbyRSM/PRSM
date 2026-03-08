@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, Menu, safeStorage, Notification } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import { join, dirname } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'fs'
+import { join, dirname, resolve, relative, isAbsolute } from 'path'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, promises as fs } from 'fs'
 
 // Read version from package.json (works in both dev and prod)
 function getAppVersion(): string {
@@ -169,6 +169,65 @@ function saveTrustedHosts(): void {
   }
 }
 
+let cachedWorkspaceRoot: string | null | undefined
+
+function getWorkspaceRoot(): string | null {
+  if (cachedWorkspaceRoot !== undefined) return cachedWorkspaceRoot
+
+  const candidates = [
+    process.env.OPENCLAW_WORKSPACE,
+    join(process.cwd(), '..'),
+    process.cwd(),
+    join(app.getPath('home'), '.openclaw', 'workspace'),
+    join(app.getAppPath(), '..')
+  ].filter((value): value is string => Boolean(value))
+
+  for (const candidate of candidates) {
+    const absoluteCandidate = resolve(candidate)
+    if (!existsSync(absoluteCandidate)) continue
+
+    const hasWorkspaceMarkers =
+      existsSync(join(absoluteCandidate, 'AGENTS.md')) ||
+      existsSync(join(absoluteCandidate, 'SOUL.md')) ||
+      existsSync(join(absoluteCandidate, 'memory'))
+
+    if (hasWorkspaceMarkers) {
+      cachedWorkspaceRoot = absoluteCandidate
+      return cachedWorkspaceRoot
+    }
+  }
+
+  cachedWorkspaceRoot = null
+  return cachedWorkspaceRoot
+}
+
+function resolveWorkspacePath(inputPath: string): { absolutePath: string; relativePath: string } {
+  if (typeof inputPath !== 'string' || !inputPath.trim()) {
+    throw new Error('Invalid workspace path')
+  }
+
+  const workspaceRoot = getWorkspaceRoot()
+  if (!workspaceRoot) {
+    throw new Error('Workspace root not detected')
+  }
+
+  const trimmed = inputPath.trim()
+  const normalizedInput = trimmed.replace(/\\/g, '/')
+  const absolutePath = isAbsolute(normalizedInput)
+    ? resolve(normalizedInput)
+    : resolve(workspaceRoot, normalizedInput.replace(/^\/+/, ''))
+
+  const relativePath = relative(workspaceRoot, absolutePath)
+  if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    throw new Error('Path is outside workspace root')
+  }
+
+  return {
+    absolutePath,
+    relativePath: relativePath.replace(/\\/g, '/')
+  }
+}
+
 function createWindow() {
   // Remove the default menu bar (File, Edit, View, Window, Help)
   Menu.setApplicationMenu(null)
@@ -316,6 +375,42 @@ ipcMain.handle('openclaw:getConfig', async () => {
     defaultUrl: '',
     theme: 'dark'
   }
+})
+
+ipcMain.handle('runtime:getInfo', async () => {
+  return {
+    mode: 'desktop' as const,
+    platform: process.platform,
+    bridgeAvailable: true,
+    appVersion: getAppVersion(),
+    workspaceRoot: getWorkspaceRoot()
+  }
+})
+
+ipcMain.handle('workspace:readFile', async (_event, path: string) => {
+  const { absolutePath, relativePath } = resolveWorkspacePath(path)
+
+  try {
+    const content = await fs.readFile(absolutePath, 'utf-8')
+    return { ok: true, path: relativePath, content, missing: false }
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      return { ok: false, path: relativePath, content: '', missing: true }
+    }
+    throw err
+  }
+})
+
+ipcMain.handle('workspace:writeFile', async (_event, path: string, content: string) => {
+  if (typeof content !== 'string') {
+    throw new Error('Invalid workspace file content')
+  }
+
+  const { absolutePath, relativePath } = resolveWorkspacePath(path)
+  await fs.mkdir(dirname(absolutePath), { recursive: true })
+  await fs.writeFile(absolutePath, content, 'utf-8')
+
+  return { ok: true, path: relativePath }
 })
 
 ipcMain.handle('shell:openExternal', async (_event, url: string) => {

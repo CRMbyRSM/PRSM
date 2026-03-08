@@ -670,7 +670,7 @@ const MessageBubble = memo(function MessageBubble({
   message,
   agentName,
   channel,
-  isStreaming,
+  isStreaming: _isStreaming,
   sessionId,
   thinkingEnabled,
   streamingThinking

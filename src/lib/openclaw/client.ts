@@ -1,83 +1,37 @@
-// OpenClaw Client - Core Connection, Events, and Streaming
+// OpenClaw Client - Bridge HTTP Transport
 
 import type {
-  Session, Agent, Skill, CronJob,
-  RequestFrame, ResponseFrame, EventFrame, EventHandler,
-  WebSocketLike, WebSocketFactory
+  Session, Agent, Skill, CronJob, EventHandler, Message
 } from './types'
-import type { DeviceIdentity } from '../device-identity'
-import { signConnectPayload } from '../device-identity'
-import { stripAnsi, extractToolResultText, extractTextFromContent, isHeartbeatContent, isNoiseContent, stripSystemNotifications } from './utils'
-import * as sessionsApi from './sessions'
-import * as chatApi from './chat'
-import * as agentsApi from './agents'
-import * as skillsApi from './skills'
-import * as cronApi from './cron-jobs'
-import * as configApi from './config'
-import * as featuresApi from './features'
+import type { ChatHistoryResult, ChatAttachmentInput } from './chat'
+import { stripAnsi, stripSystemNotifications, parseMediaTokens, stripConversationMetadata } from './utils'
+import type { CreateAgentParams, CreateAgentResult, DeleteAgentResult } from './agents'
 
-/** Matches internal system sessions that should never be treated as subagents. */
-const SYSTEM_SESSION_RE = /^agent:[^:]+:(main|cron)(:|$)/
-
-/** Per-session stream accumulation state. */
-interface SessionStreamState {
-  source: 'chat' | 'agent' | null
-  text: string
-  mode: 'delta' | 'cumulative' | null
-  blockOffset: number
-  started: boolean
-  runId: string | null
-}
-
-function createSessionStream(): SessionStreamState {
-  return { source: null, text: '', mode: null, blockOffset: 0, started: false, runId: null }
-}
+/** Maximum polling duration after sending a message (5 minutes). */
+const MAX_POLL_DURATION_MS = 5 * 60 * 1000
+/** Interval between message polls while waiting for assistant response. */
+const POLL_INTERVAL_MS = 2000
+/** Number of consecutive identical polls before declaring stream complete. */
+const STABLE_POLL_THRESHOLD = 3
 
 export class OpenClawClient {
-  private ws: WebSocketLike | null = null
-  private wsFactory: WebSocketFactory | null
-  private url: string
-  private token: string
-  private authMode: 'token' | 'password'
-  private requestId = 0
-  private pendingRequests = new Map<string, {
-    resolve: (value: unknown) => void
-    reject: (error: Error) => void
-  }>()
+  private bridgeUrl: string
+  private bridgeToken: string
   private eventHandlers = new Map<string, Set<EventHandler>>()
-  private reconnectAttempts = 0
-  private maxReconnectAttempts = 5
-  private reconnectDelay = 1000
-  private authenticated = false
-  private deviceIdentity: DeviceIdentity | null = null
-  private healthCheckTimer: ReturnType<typeof setInterval> | null = null
-  private static HEALTH_CHECK_INTERVAL = 15000 // 15s
-  private static HEALTH_CHECK_TIMEOUT = 10000  // 10s
-  /** When true, suppresses reconnect (auth failures, cert errors, etc.) */
-  private suppressReconnect = false
-  /** Track whether certError has been emitted this connect cycle */
-  private certErrorEmitted = false
+  private pollTimers = new Set<ReturnType<typeof setTimeout>>()
+  private activePollAbort: AbortController | null = null
 
-  // Per-session stream tracking — allows concurrent agent conversations
-  // without cross-contaminating stream text buffers.
-  private sessionStreams = new Map<string, SessionStreamState>()
-  // Set of session keys that the user has actively sent messages to.
-  // Used for subagent detection: events from unknown sessions are subagents.
-  private parentSessionKeys = new Set<string>()
-  // The session key for the most recent user send (fallback for events without sessionKey).
+  // Session tracking (kept for store compatibility)
   private defaultSessionKey: string | null = null
-  // Guards against emitting duplicate streamSessionKey events per send cycle.
-  private sessionKeyResolved = false
+  private parentSessionKeys = new Set<string>()
 
-  constructor(url: string, token: string = '', authMode: 'token' | 'password' = 'token', wsFactory?: WebSocketFactory, deviceIdentity?: DeviceIdentity | null) {
-    this.url = url
-    this.token = token
-    this.authMode = authMode
-    this.wsFactory = wsFactory || null
-    this.deviceIdentity = deviceIdentity || null
+  constructor(bridgeUrl: string, bridgeToken: string) {
+    this.bridgeUrl = bridgeUrl.replace(/\/+$/, '')
+    this.bridgeToken = bridgeToken
   }
 
-  // Event handling
+  // ── Event emitter ──────────────────────────────────────────────
+
   on(event: string, handler: EventHandler): void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, new Set())
@@ -90,649 +44,69 @@ export class OpenClawClient {
   }
 
   private emit(event: string, ...args: unknown[]): void {
-    const handlers = this.eventHandlers.get(event)
-    handlers?.forEach((handler) => {
-      try {
-        handler(...args)
-      } catch {
-        // Event handler error - silently ignore
-      }
+    this.eventHandlers.get(event)?.forEach((handler) => {
+      try { handler(...args) } catch { /* ignore */ }
     })
   }
 
-  // Connection management
-  connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      let settled = false
-      const settle = (fn: typeof resolve | typeof reject, value?: any) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timeout)
-        fn(value)
-      }
+  // ── HTTP helper ────────────────────────────────────────────────
 
-      // 15-second timeout to prevent hanging on unreachable servers
-      const timeout = setTimeout(() => {
-        settle(reject, new Error('Connection timed out — server may be unreachable'))
-        this.ws?.close()
-      }, 15_000)
+  private async bridgeFetch<T = any>(path: string, options?: RequestInit): Promise<T> {
+    const url = `${this.bridgeUrl}${path}`
+    const headers: Record<string, string> = {
+      ...(options?.headers as Record<string, string> || {}),
+    }
+    if (this.bridgeToken) {
+      headers['Authorization'] = `Bearer ${this.bridgeToken}`
+    }
+    if (options?.body && typeof options.body === 'string') {
+      headers['Content-Type'] = 'application/json'
+    }
 
-      try {
-        this.ws = this.wsFactory ? this.wsFactory(this.url) : new WebSocket(this.url)
-
-        this.ws.onopen = () => {
-          this.reconnectAttempts = 0
-          this.suppressReconnect = false
-          this.certErrorEmitted = false
-        }
-
-        this.ws.onerror = (error: any) => {
-          const errorMsg = error?.message || ''
-
-          // Check for TLS certificate errors:
-          // 1. Native iOS WebSocket tags TLS errors with 'TLS_CERTIFICATE_ERROR:' prefix
-          // 2. For browser WebSocket, we can only guess based on wss:// + immediate close
-          const isTLSError = error?.isTLSError === true
-          const isBrowserCertGuess = !this.wsFactory &&
-            this.url.startsWith('wss://') &&
-            this.ws?.readyState === WebSocket.CLOSED
-
-          if (isTLSError || isBrowserCertGuess) {
-            this.suppressReconnect = true
-            try {
-              const urlObj = new URL(this.url)
-              const httpsUrl = `https://${urlObj.host}`
-              // Only show cert error modal once per connect cycle
-              if (!this.certErrorEmitted) {
-                this.certErrorEmitted = true
-                this.emit('certError', { url: this.url, httpsUrl })
-              }
-              settle(reject, new Error(`Certificate error - visit ${httpsUrl} to accept the certificate`))
-              return
-            } catch {
-              // URL parsing failed, fall through to generic error
-            }
-          }
-
-          const detail = errorMsg ? `: ${errorMsg}` : ''
-          this.emit('error', error)
-          settle(reject, new Error(`WebSocket connection failed${detail}`))
-        }
-
-        this.ws.onclose = () => {
-          this.authenticated = false
-          this.stopHealthCheck()
-          this.resetStreamState()
-          this.emit('disconnected')
-          settle(reject, new Error('WebSocket closed before handshake completed'))
-          this.attemptReconnect()
-        }
-
-        this.ws.onmessage = (event) => {
-          const incoming = (event as MessageEvent).data
-          if (typeof incoming === 'string') {
-            this.handleMessage(incoming, (...a) => settle(resolve, ...a), (...a) => settle(reject, ...a))
-            return
-          }
-
-          // Some runtimes deliver WebSocket frames as Blob/ArrayBuffer.
-          if (incoming instanceof Blob) {
-            incoming.text().then((text) => {
-              this.handleMessage(text, (...a) => settle(resolve, ...a), (...a) => settle(reject, ...a))
-            }).catch(() => {})
-            return
-          }
-
-          if (incoming instanceof ArrayBuffer) {
-            try {
-              const text = new TextDecoder().decode(new Uint8Array(incoming))
-              this.handleMessage(text, (...a) => settle(resolve, ...a), (...a) => settle(reject, ...a))
-            } catch {
-              // ignore
-            }
-            return
-          }
-
-          // Unknown frame type; ignore.
-        }
-      } catch (error) {
-        settle(reject, error)
-      }
-    })
+    const res = await fetch(url, { ...options, headers })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`Bridge ${res.status}: ${text || res.statusText}`)
+    }
+    return res.json()
   }
 
-  private attemptReconnect(): void {
-    // Don't reconnect after auth failures, cert errors, etc.
-    if (this.suppressReconnect) {
-      this.emit('reconnectExhausted')
-      return
+  // ── Connection ─────────────────────────────────────────────────
+
+  async connect(): Promise<void> {
+    // 1. Health check (no auth required)
+    try {
+      await fetch(`${this.bridgeUrl}/health`, { signal: AbortSignal.timeout(10000) })
+    } catch (err) {
+      throw new Error(`Bridge unreachable at ${this.bridgeUrl}`)
     }
 
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.emit('reconnectExhausted')
-      return
+    // 2. Validate auth by listing sessions
+    try {
+      await this.bridgeFetch('/sessions?limit=1')
+    } catch (err) {
+      throw new Error(`Bridge auth failed: ${err instanceof Error ? err.message : 'unknown error'}`)
     }
 
-    this.reconnectAttempts++
-    const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000)
-
-    setTimeout(() => {
-      this.connect().catch(() => {})
-    }, delay)
+    this.emit('connected', {})
   }
 
   disconnect(): void {
-    this.maxReconnectAttempts = 0 // Prevent auto-reconnect
-    this.stopHealthCheck()
-    if (this.ws) {
-      // Null out handlers BEFORE close() so the socket stops processing
-      // messages immediately. ws.close() is async — without this, events
-      // arriving during the CLOSING state still trigger handleMessage.
-      this.ws.onmessage = null
-      this.ws.onclose = null
-      this.ws.onerror = null
-      this.ws.close()
+    // Stop all polling
+    for (const timer of this.pollTimers) {
+      clearTimeout(timer)
     }
-    this.ws = null
-    this.authenticated = false
-    this.resetStreamState()
-  }
-
-  /** Periodic health check to detect half-open (silently dead) connections. */
-  private startHealthCheck(): void {
-    this.stopHealthCheck()
-    this.healthCheckTimer = setInterval(() => {
-      if (!this.ws || this.ws.readyState !== this.ws.OPEN || !this.authenticated) return
-
-      const id = (++this.requestId).toString()
-      const request = { type: 'req', method: 'skills.status', params: {}, id }
-      let resolved = false
-
-      const timeout = setTimeout(() => {
-        if (resolved) return
-        resolved = true
-        this.pendingRequests.delete(id)
-        // Health check timed out — connection is dead, force close to trigger reconnect
-        if (this.ws) {
-          this.ws.onmessage = null
-          this.ws.close()
-        }
-      }, OpenClawClient.HEALTH_CHECK_TIMEOUT)
-
-      this.pendingRequests.set(id, {
-        resolve: () => { if (!resolved) { resolved = true; clearTimeout(timeout) } },
-        reject: () => { if (!resolved) { resolved = true; clearTimeout(timeout) } }
-      })
-
-      try {
-        this.ws.send(JSON.stringify(request))
-      } catch {
-        // Send failed — socket is dead
-        if (!resolved) {
-          resolved = true
-          clearTimeout(timeout)
-          this.pendingRequests.delete(id)
-          if (this.ws) this.ws.close()
-        }
-      }
-    }, OpenClawClient.HEALTH_CHECK_INTERVAL)
-  }
-
-  private stopHealthCheck(): void {
-    if (this.healthCheckTimer) {
-      clearInterval(this.healthCheckTimer)
-      this.healthCheckTimer = null
+    this.pollTimers.clear()
+    if (this.activePollAbort) {
+      this.activePollAbort.abort()
+      this.activePollAbort = null
     }
-  }
-
-  private async performHandshake(nonce?: string): Promise<void> {
-    const id = (++this.requestId).toString()
-    const scopes = ['operator.read', 'operator.write', 'operator.admin', 'operator.approvals']
-
-    // Sign the challenge if we have a device identity and nonce
-    // PRSM uses signConnectPayload instead of upstream's signChallenge
-    let device: { id: string; publicKey: string; signature: string; signedAt: number; nonce?: string } | undefined
-    if (this.deviceIdentity && nonce) {
-      try {
-        device = await signConnectPayload(this.deviceIdentity, {
-          clientId: 'gateway-client',
-          clientMode: 'ui',
-          role: 'operator',
-          scopes,
-          token: this.token || null,
-          nonce
-        })
-      } catch (err) {
-        // Device challenge signing failed — connect without device identity
-      }
-    }
-
-    const connectMsg: RequestFrame = {
-      type: 'req',
-      id,
-      method: 'connect',
-      params: {
-        minProtocol: 3,
-        maxProtocol: 3,
-        role: 'operator',
-        scopes,
-        client: {
-          id: 'gateway-client',
-          displayName: 'ClawControl',
-          version: '1.0.0',
-          platform: 'web',
-          mode: 'ui'
-        },
-        caps: ['tool-events'],
-        auth: this.token
-            ? (this.authMode === 'password' ? { password: this.token } : { token: this.token })
-            : undefined,
-        device
-      }
-    }
-
-    this.ws?.send(JSON.stringify(connectMsg))
-  }
-
-  // RPC methods
-  private async call<T>(method: string, params?: any, options?: { timeoutMs?: number }): Promise<T> {
-    if (!this.ws || this.ws.readyState !== this.ws.OPEN) {
-      throw new Error('Not connected to OpenClaw')
-    }
-
-    const id = (++this.requestId).toString()
-    const request: RequestFrame = {
-      type: 'req',
-      method,
-      params,
-      id
-    }
-
-    const timeoutMs = options?.timeoutMs || 30000
-
-    return new Promise((resolve, reject) => {
-      this.pendingRequests.set(id, {
-        resolve: resolve as (value: unknown) => void,
-        reject
-      })
-
-      this.ws!.send(JSON.stringify(request))
-
-      setTimeout(() => {
-        if (this.pendingRequests.has(id)) {
-          this.pendingRequests.delete(id)
-          reject(new Error(`Request timeout: ${method}`))
-        }
-      }, timeoutMs)
-    })
-  }
-
-  private handleMessage(data: string, resolve?: () => void, reject?: (err: Error) => void): void {
-    try {
-      const message = JSON.parse(data)
-
-      // 1. Handle Events
-      if (message.type === 'event') {
-        const eventFrame = message as EventFrame
-
-        // Special case: Handshake Challenge
-        if (eventFrame.event === 'connect.challenge') {
-          this.performHandshake(eventFrame.payload?.nonce).catch((err) => {
-            reject?.(err)
-          })
-          return
-        }
-
-        this.handleNotification(eventFrame.event, eventFrame.payload)
-        return
-      }
-
-      // 2. Handle Responses
-      if (message.type === 'res') {
-        const resFrame = message as ResponseFrame
-        const pending = this.pendingRequests.get(resFrame.id)
-
-        // Special case: Initial Connect Response
-        if (!this.authenticated && resFrame.ok && resFrame.payload?.type === 'hello-ok') {
-          this.authenticated = true
-          this.startHealthCheck()
-          this.emit('connected', resFrame.payload)
-          resolve?.()
-          return
-        }
-
-        if (pending) {
-          this.pendingRequests.delete(resFrame.id)
-          if (resFrame.ok) {
-            pending.resolve(resFrame.payload)
-          } else {
-            const errorMsg = resFrame.error?.message || 'Unknown error'
-            pending.reject(new Error(errorMsg))
-          }
-        } else if (!resFrame.ok && !this.authenticated) {
-          // Failed connect response — don't reconnect with same bad credentials
-          this.suppressReconnect = true
-          const errorCode = resFrame.error?.code
-          const errorMsg = resFrame.error?.message || 'Handshake failed'
-          if (errorCode === 'NOT_PAIRED') {
-            this.emit('pairingRequired', {
-              requestId: resFrame.id,
-              deviceId: this.deviceIdentity?.deviceId
-            })
-            reject?.(new Error('NOT_PAIRED'))
-            return
-          }
-          // Stale device identity — keypair changed but server has old key.
-          // Signal the store to clear the identity and retry.
-          if (errorMsg.toLowerCase().includes('signature invalid') ||
-              errorMsg.toLowerCase().includes('signature mismatch')) {
-            this.emit('deviceIdentityStale')
-            reject?.(new Error('DEVICE_IDENTITY_STALE'))
-            return
-          }
-          reject?.(new Error(errorMsg))
-        }
-        return
-      }
-    } catch {
-      // Failed to parse message
-    }
-  }
-
-  // Stream state management — per-session
-
-  private getStream(sessionKey: string): SessionStreamState {
-    let ss = this.sessionStreams.get(sessionKey)
-    if (!ss) {
-      ss = createSessionStream()
-      this.sessionStreams.set(sessionKey, ss)
-    }
-    return ss
-  }
-
-  /** Resolve the session key for an event. Falls back to defaultSessionKey for legacy events. */
-  private resolveEventSessionKey(eventSessionKey?: unknown): string {
-    if (typeof eventSessionKey === 'string' && eventSessionKey) return eventSessionKey
-    return this.defaultSessionKey || '__default__'
-  }
-
-  private resetSessionStream(sessionKey: string): void {
-    this.sessionStreams.delete(sessionKey)
-  }
-
-  private resetStreamState(): void {
-    this.sessionStreams.clear()
     this.parentSessionKeys.clear()
     this.defaultSessionKey = null
-    this.sessionKeyResolved = false
+    this.emit('disconnected')
   }
 
-  /** Emit streamSessionKey for the first event of a new send cycle if the key differs. */
-  private maybeEmitSessionKey(runId: unknown, sessionKey: string): void {
-    if (this.sessionKeyResolved) return
-    if (!this.defaultSessionKey) return
-    // Skip events from other known parent sessions (different conversations)
-    if (this.parentSessionKeys.has(sessionKey) && sessionKey !== this.defaultSessionKey) return
-
-    this.sessionKeyResolved = true
-    if (sessionKey === this.defaultSessionKey) return // Same key, no rename needed
-
-    // Server assigned a different canonical key — update tracking and notify store
-    this.parentSessionKeys.add(sessionKey)
-    this.emit('streamSessionKey', { runId, sessionKey })
-  }
-
-  private ensureStream(ss: SessionStreamState, source: 'chat' | 'agent', modeHint: 'delta' | 'cumulative', runId: unknown, sessionKey: string): void {
-    if (typeof runId === 'string' && !ss.runId) {
-      ss.runId = runId
-    }
-    this.maybeEmitSessionKey(runId, sessionKey)
-
-    if (ss.source === null) {
-      ss.source = source
-    }
-    if (ss.source !== source) return
-
-    if (!ss.mode) {
-      ss.mode = modeHint
-    }
-
-    if (!ss.started) {
-      ss.started = true
-      this.emit('streamStart', { sessionKey })
-    }
-  }
-
-  private applyStreamText(ss: SessionStreamState, nextText: string, sessionKey: string): void {
-    if (!nextText) return
-    const previous = ss.text
-    if (nextText === previous) return
-
-    if (!previous) {
-      ss.text = nextText
-      this.emit('streamChunk', { text: nextText, sessionKey })
-      return
-    }
-
-    if (nextText.startsWith(previous)) {
-      const append = nextText.slice(previous.length)
-      ss.text = nextText
-      if (append) {
-        this.emit('streamChunk', { text: append, sessionKey })
-      }
-      return
-    }
-
-    // New content block — accumulate rather than replace.
-    const separator = '\n\n'
-    ss.text = ss.text + separator + nextText
-    this.emit('streamChunk', { text: separator + nextText, sessionKey })
-  }
-
-  private mergeIncoming(ss: SessionStreamState, incoming: string, modeHint: 'delta' | 'cumulative'): string {
-    const previous = ss.text
-
-    if (modeHint === 'cumulative') {
-      if (!previous) return incoming
-      if (incoming === previous) return previous
-
-      // Normal cumulative growth: incoming extends the full accumulated text
-      if (incoming.startsWith(previous)) return incoming
-
-      // Check if incoming extends just the current content block
-      // (agent data.text is cumulative per-block, resetting on tool calls)
-      const currentBlock = previous.slice(ss.blockOffset)
-      if (currentBlock && incoming.startsWith(currentBlock)) {
-        return previous.slice(0, ss.blockOffset) + incoming
-      }
-
-      // New content block detected — accumulate rather than replace.
-      const separator = '\n\n'
-      ss.blockOffset = previous.length + separator.length
-      return previous + separator + incoming
-    }
-
-    // Some servers send cumulative strings even in "delta" fields.
-    if (previous && incoming.startsWith(previous)) {
-      return incoming
-    }
-
-    // Some servers repeat a suffix; avoid regressions.
-    if (previous && previous.endsWith(incoming)) {
-      return previous
-    }
-
-    // Fallback for partial overlap between chunk boundaries.
-    if (previous) {
-      const maxOverlap = Math.min(previous.length, incoming.length)
-      for (let i = maxOverlap; i > 0; i--) {
-        if (previous.endsWith(incoming.slice(0, i))) {
-          return previous + incoming.slice(i)
-        }
-      }
-    }
-
-    return previous + incoming
-  }
-
-  // Notification / event handling
-
-  private handleNotification(event: string, payload: any): void {
-    const eventSessionKey = payload?.sessionKey as string | undefined
-    const sk = this.resolveEventSessionKey(eventSessionKey)
-
-    // Subagent detection: events from sessions not in the parent set
-    // indicate a spawned subagent conversation.
-    // Skip system sessions (agent:X:main, agent:X:cron) — they are internal
-    // and should never surface as subagent blocks in the chat.
-    if (this.parentSessionKeys.size > 0 && eventSessionKey && !this.parentSessionKeys.has(eventSessionKey)) {
-      if (!SYSTEM_SESSION_RE.test(eventSessionKey)) {
-        this.emit('subagentDetected', { sessionKey: eventSessionKey })
-      }
-    }
-
-    switch (event) {
-      case 'chat': {
-        const ss = this.getStream(sk)
-
-        if (payload.state === 'delta') {
-          this.ensureStream(ss, 'chat', 'cumulative', payload.runId, sk)
-          if (ss.source !== 'chat') return // Another stream type already claimed this session
-
-          const rawText = stripSystemNotifications(
-            payload.message?.content !== undefined
-              ? extractTextFromContent(payload.message.content)
-              : (typeof payload.delta === 'string' ? stripAnsi(payload.delta) : '')
-          ).trim()
-
-          if (rawText && !isNoiseContent(rawText)) {
-            const nextText = this.mergeIncoming(ss, isHeartbeatContent(rawText) ? '\u2764\uFE0F' : rawText, 'cumulative')
-            this.applyStreamText(ss, nextText, sk)
-          }
-          return
-        } else if (payload.state === 'error') {
-          // Server-side error during message processing.
-          // Surface as a system message and end the stream.
-          const errorMsg = payload.errorMessage || payload.error?.message || 'Unknown server error'
-          this.emit('message', {
-            id: `error-${Date.now()}`,
-            role: 'system',
-            content: `Server error: ${errorMsg}`,
-            timestamp: new Date().toISOString(),
-            sessionKey: eventSessionKey
-          })
-          if (ss.started) {
-            this.emit('streamEnd', { sessionKey: eventSessionKey })
-          }
-          this.resetSessionStream(sk)
-          return
-        } else if (payload.state === 'final') {
-          this.maybeEmitSessionKey(payload.runId, sk)
-
-          // Always emit the canonical final message so the store can replace
-          // any truncated streaming placeholder.
-          if (payload.message) {
-            const text = stripSystemNotifications(extractTextFromContent(payload.message.content)).trim()
-            if (text && !isNoiseContent(text)) {
-              const id =
-                (typeof payload.message.id === 'string' && payload.message.id) ||
-                (typeof payload.runId === 'string' && payload.runId) ||
-                `msg-${Date.now()}`
-              const tsRaw = payload.message.timestamp
-              const tsNum = typeof tsRaw === 'number' ? tsRaw : NaN
-              const tsMs = Number.isFinite(tsNum) ? (tsNum > 1e12 ? tsNum : tsNum * 1000) : Date.now()
-              this.emit('message', {
-                id,
-                role: payload.message.role,
-                content: isHeartbeatContent(text) ? '\u2764\uFE0F' : text,
-                timestamp: new Date(tsMs).toISOString(),
-                sessionKey: eventSessionKey
-              })
-            }
-          }
-
-          if (ss.started) {
-            this.emit('streamEnd', { sessionKey: eventSessionKey })
-          }
-          this.resetSessionStream(sk)
-        }
-        break
-      }
-      case 'presence':
-        this.emit('agentStatus', payload)
-        break
-      case 'agent': {
-        const ss = this.getStream(sk)
-
-        if (payload.stream === 'assistant') {
-          const hasCanonicalText = typeof payload.data?.text === 'string'
-          this.ensureStream(ss, 'agent', hasCanonicalText ? 'cumulative' : 'delta', payload.runId, sk)
-          if (ss.source !== 'agent') return // Another stream type already claimed this session
-
-          // Prefer canonical cumulative text when available.
-          const canonicalText = stripSystemNotifications(
-            typeof payload.data?.text === 'string' ? stripAnsi(payload.data.text) : ''
-          ).trim()
-          if (canonicalText && !isNoiseContent(canonicalText)) {
-            const nextText = this.mergeIncoming(ss, isHeartbeatContent(canonicalText) ? '\u2764\uFE0F' : canonicalText, 'cumulative')
-            this.applyStreamText(ss, nextText, sk)
-            return
-          }
-
-          const deltaText = stripSystemNotifications(
-            typeof payload.data?.delta === 'string' ? stripAnsi(payload.data.delta) : ''
-          ).trim()
-          if (deltaText && !isNoiseContent(deltaText)) {
-            const nextText = this.mergeIncoming(ss, isHeartbeatContent(deltaText) ? '\u2764\uFE0F' : deltaText, 'delta')
-            this.applyStreamText(ss, nextText, sk)
-          }
-        } else if (payload.stream === 'tool') {
-          this.maybeEmitSessionKey(payload.runId, sk)
-
-          if (!ss.started) {
-            ss.started = true
-            this.emit('streamStart', { sessionKey: sk })
-          }
-
-          const data = payload.data || {}
-          const rawResult = extractToolResultText(data.result)
-          const phase = data.phase || (data.result !== undefined ? 'result' : 'start')
-          // On 'result' phase, server may strip data.result (unless verboseLevel=full)
-          // but still sends data.meta with a short summary (e.g. file path, command).
-          const meta = typeof data.meta === 'string' ? data.meta : undefined
-          const toolPayload = {
-            toolCallId: data.toolCallId || data.id || `tool-${Date.now()}`,
-            name: data.name || data.toolName || 'unknown',
-            phase,
-            result: rawResult ? stripAnsi(rawResult) : undefined,
-            args: phase === 'start' ? data.args : undefined,
-            meta,
-            sessionKey: eventSessionKey
-          }
-          this.emit('toolCall', toolPayload)
-        } else if (payload.stream === 'lifecycle') {
-          this.maybeEmitSessionKey(payload.runId, sk)
-          const phase = payload.data?.phase
-          const state = payload.data?.state
-          if (phase === 'end' || phase === 'error' || state === 'complete' || state === 'error') {
-            if (ss.source === 'agent' && ss.started) {
-              this.emit('streamEnd', { sessionKey: eventSessionKey })
-              // Partial reset: keep source and text so late-arriving chat:delta
-              // events are still filtered by the source !== 'chat' guard.
-              // chat:final will delete the session stream entirely.
-              ss.started = false
-            }
-          }
-        }
-        break
-      }
-      case 'exec.approval.requested':
-        this.emit('execApprovalRequested', payload)
-        break
-      default:
-        this.emit(event, payload)
-    }
-  }
+  // ── Session tracking (store compatibility) ─────────────────────
 
   getActiveSessionKey(): string | null {
     return this.defaultSessionKey
@@ -740,46 +114,86 @@ export class OpenClawClient {
 
   setPrimarySessionKey(key: string | null): void {
     if (key) {
-      // Clear any stale stream state from a previous send cycle.
-      // Without this, a prior agent-sourced stream leaves ss.source='agent'
-      // which blocks subsequent chat-sourced responses from being processed.
-      this.sessionStreams.delete(key)
       this.parentSessionKeys.add(key)
       this.defaultSessionKey = key
-      this.sessionKeyResolved = false
     } else {
-      // Clear default when switching sessions (parent set is preserved
-      // so concurrent streams from other sessions aren't detected as subagents)
       this.defaultSessionKey = null
     }
   }
 
-  // Domain API methods - delegated to modules
+  // ── Sessions ───────────────────────────────────────────────────
 
-  // Sessions
   async listSessions(): Promise<Session[]> {
-    return sessionsApi.listSessions(this.call.bind(this))
+    try {
+      const data = await this.bridgeFetch<any>('/sessions?limit=50')
+      const sessions = Array.isArray(data?.sessions) ? data.sessions : []
+      return sessions.map((s: any) => {
+        const key = s.key || s.id
+        return {
+          id: key || `session-${Math.random()}`,
+          key,
+          title: s.title || s.label || key || 'New Chat',
+          agentId: s.agentId || extractAgentIdFromKey(key),
+          createdAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
+          updatedAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
+          lastMessage: s.lastMessagePreview || s.lastMessage,
+          spawned: s.spawned || isSubagentKey(key) || undefined,
+          cron: s.cron || isCronKey(key) || undefined,
+          parentSessionId: s.parentSessionId || s.parentKey || s.spawnedBy || undefined
+        }
+      })
+    } catch {
+      return []
+    }
   }
 
   async createSession(agentId?: string): Promise<Session> {
-    return sessionsApi.createSession(agentId)
+    const agent = agentId || 'main'
+    const uniqueId = crypto.randomUUID()
+    const key = `agent:${agent}:${uniqueId}`
+    return {
+      id: key,
+      key,
+      title: 'New Chat',
+      agentId: agent,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
-    return sessionsApi.deleteSession(this.call.bind(this), sessionId)
+  async deleteSession(_sessionId: string): Promise<void> {
+    console.warn('[PRSM] deleteSession not yet available via bridge')
   }
 
-  async updateSession(sessionId: string, updates: { label?: string }): Promise<void> {
-    return sessionsApi.updateSession(this.call.bind(this), sessionId, updates)
+  async updateSession(_sessionId: string, _updates: { label?: string }): Promise<void> {
+    console.warn('[PRSM] updateSession not yet available via bridge')
   }
 
-  async spawnSession(agentId: string, prompt?: string): Promise<Session> {
-    return sessionsApi.spawnSession(this.call.bind(this), agentId, prompt)
+  async spawnSession(agentId: string, _prompt?: string): Promise<Session> {
+    console.warn('[PRSM] spawnSession not yet available via bridge')
+    const key = `agent:${agentId}:spawned-${Date.now()}`
+    return {
+      id: key,
+      key,
+      title: 'Spawned Session',
+      agentId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      spawned: true
+    }
   }
 
-  // Chat
-  async getSessionMessages(sessionId: string): Promise<chatApi.ChatHistoryResult> {
-    return chatApi.getSessionMessages(this.call.bind(this), sessionId)
+  // ── Chat ───────────────────────────────────────────────────────
+
+  async getSessionMessages(sessionId: string): Promise<ChatHistoryResult> {
+    try {
+      const data = await this.bridgeFetch<any>(`/sessions/${encodeURIComponent(sessionId)}/messages`)
+      const rawMessages: any[] = Array.isArray(data?.messages) ? data.messages : []
+      return parseMessageHistory(rawMessages)
+    } catch (err) {
+      console.warn('[PRSM] getSessionMessages failed:', err)
+      return { messages: [], toolCalls: [] }
+    }
   }
 
   async sendMessage(params: {
@@ -787,89 +201,474 @@ export class OpenClawClient {
     content: string
     agentId?: string
     thinking?: boolean
-    attachments?: chatApi.ChatAttachmentInput[]
+    attachments?: ChatAttachmentInput[]
   }): Promise<{ sessionKey?: string }> {
-    return chatApi.sendMessage(this.call.bind(this), params)
+    const sessionKey = params.sessionId || (params.agentId ? `agent:${params.agentId}:main` : 'agent:main:main')
+    const idempotencyKey = crypto.randomUUID()
+
+    const body: Record<string, unknown> = {
+      message: params.content,
+      sessionKey,
+      idempotencyKey
+    }
+    if (params.agentId) body.agentId = params.agentId
+    if (params.attachments && params.attachments.length > 0) {
+      body.attachments = params.attachments
+    }
+
+    const result = await this.bridgeFetch<any>('/messages/send', {
+      method: 'POST',
+      body: JSON.stringify(body)
+    })
+
+    const resolvedKey = result?.result?.sessionKey || result?.sessionKey || sessionKey
+
+    // Start polling for response
+    this.startPolling(resolvedKey)
+
+    return { sessionKey: resolvedKey }
   }
 
-  async abortChat(sessionId: string): Promise<void> {
-    return chatApi.abortChat(this.call.bind(this), sessionId)
+  async abortChat(_sessionId: string): Promise<void> {
+    console.warn('[PRSM] abortChat not yet available via bridge')
+    // Stop polling for this session
+    if (this.activePollAbort) {
+      this.activePollAbort.abort()
+      this.activePollAbort = null
+    }
   }
 
-  // Agents
+  // ── Polling for "streaming" ────────────────────────────────────
+
+  private startPolling(sessionKey: string): void {
+    // Cancel any existing poll
+    if (this.activePollAbort) {
+      this.activePollAbort.abort()
+    }
+
+    const abort = new AbortController()
+    this.activePollAbort = abort
+    const startTime = Date.now()
+    let lastContent = ''
+    let lastMessageCount = 0
+    let stableCount = 0
+    let streamStarted = false
+
+    this.emit('streamStart', { sessionKey })
+
+    const poll = async () => {
+      if (abort.signal.aborted) return
+
+      // Safety cutoff
+      if (Date.now() - startTime > MAX_POLL_DURATION_MS) {
+        this.endPolling(sessionKey, streamStarted)
+        return
+      }
+
+      try {
+        const data = await this.bridgeFetch<any>(
+          `/sessions/${encodeURIComponent(sessionKey)}/messages`
+        )
+        if (abort.signal.aborted) return
+
+        const rawMessages: any[] = Array.isArray(data?.messages) ? data.messages : []
+
+        // Find the last assistant message
+        let lastAssistant: any = null
+        for (let i = rawMessages.length - 1; i >= 0; i--) {
+          const msg = rawMessages[i].message || rawMessages[i].data || rawMessages[i].entry || rawMessages[i]
+          const role = msg.role || rawMessages[i].role
+          if (role === 'assistant') {
+            lastAssistant = msg
+            break
+          }
+        }
+
+        if (!lastAssistant) {
+          // No assistant message yet — keep polling
+          stableCount = 0
+          const timer = setTimeout(poll, POLL_INTERVAL_MS)
+          this.pollTimers.add(timer)
+          return
+        }
+
+        const rawContent = lastAssistant.content
+        let content = ''
+        if (Array.isArray(rawContent)) {
+          content = rawContent
+            .filter((c: any) => c.type === 'text' || c.type === 'input_text' || c.type === 'output_text' || (!c.type && c.text))
+            .map((c: any) => c.text)
+            .filter(Boolean)
+            .join('')
+        } else if (typeof rawContent === 'string') {
+          content = rawContent
+        } else if (rawContent && typeof rawContent === 'object') {
+          content = rawContent.text || rawContent.content || ''
+        }
+
+        content = stripAnsi(stripSystemNotifications(content).trim())
+
+        const currentMessageCount = rawMessages.length
+
+        if (content !== lastContent || currentMessageCount !== lastMessageCount) {
+          // New or growing content
+          stableCount = 0
+
+          if (content && content !== lastContent) {
+            if (!streamStarted) {
+              streamStarted = true
+            }
+
+            // Emit the delta
+            const delta = content.startsWith(lastContent) && lastContent
+              ? content.slice(lastContent.length)
+              : content
+
+            if (delta) {
+              if (!lastContent) {
+                // First chunk — emit full content
+                this.emit('streamChunk', { text: content, sessionKey })
+              } else {
+                this.emit('streamChunk', { text: delta, sessionKey })
+              }
+            }
+          }
+
+          lastContent = content
+          lastMessageCount = currentMessageCount
+        } else {
+          // Content hasn't changed
+          stableCount++
+        }
+
+        if (stableCount >= STABLE_POLL_THRESHOLD) {
+          // Content stabilized — stream complete
+          if (content) {
+            // Emit final message
+            const parsed = parseMessageHistory(rawMessages)
+            const lastParsedAssistant = parsed.messages.filter(m => m.role === 'assistant').pop()
+            if (lastParsedAssistant) {
+              this.emit('message', { ...lastParsedAssistant, sessionKey })
+            }
+          }
+          this.endPolling(sessionKey, streamStarted)
+          return
+        }
+
+        // Continue polling
+        const timer = setTimeout(poll, POLL_INTERVAL_MS)
+        this.pollTimers.add(timer)
+      } catch (err) {
+        if (abort.signal.aborted) return
+        // Network error during poll — retry
+        const timer = setTimeout(poll, POLL_INTERVAL_MS)
+        this.pollTimers.add(timer)
+      }
+    }
+
+    // Start first poll after a brief delay to let the server process the message
+    const timer = setTimeout(poll, POLL_INTERVAL_MS)
+    this.pollTimers.add(timer)
+  }
+
+  private endPolling(sessionKey: string, streamStarted: boolean): void {
+    if (this.activePollAbort) {
+      this.activePollAbort.abort()
+      this.activePollAbort = null
+    }
+    if (streamStarted) {
+      this.emit('streamEnd', { sessionKey })
+    }
+  }
+
+  // ── Agents (stubbed — bridge doesn't support yet) ──────────────
+
   async listAgents(): Promise<Agent[]> {
-    return agentsApi.listAgents(this.call.bind(this), this.url)
+    console.warn('[PRSM] listAgents not yet available via bridge')
+    return []
   }
 
-  async getAgentIdentity(agentId: string): Promise<{ name?: string; emoji?: string; avatar?: string; avatarUrl?: string } | null> {
-    return agentsApi.getAgentIdentity(this.call.bind(this), agentId)
+  async getAgentIdentity(_agentId: string): Promise<{ name?: string; emoji?: string; avatar?: string; avatarUrl?: string } | null> {
+    console.warn('[PRSM] getAgentIdentity not yet available via bridge')
+    return null
   }
 
-  async getAgentFiles(agentId: string): Promise<{ workspace: string; files: Array<{ name: string; path: string; missing: boolean; size?: number }> } | null> {
-    return agentsApi.getAgentFiles(this.call.bind(this), agentId)
+  async getAgentFiles(_agentId: string): Promise<{ workspace: string; files: Array<{ name: string; path: string; missing: boolean; size?: number }> } | null> {
+    console.warn('[PRSM] getAgentFiles not yet available via bridge')
+    return null
   }
 
-  async getAgentFile(agentId: string, fileName: string): Promise<{ content?: string; missing: boolean } | null> {
-    return agentsApi.getAgentFile(this.call.bind(this), agentId, fileName)
+  async getAgentFile(_agentId: string, _fileName: string): Promise<{ content?: string; missing: boolean } | null> {
+    console.warn('[PRSM] getAgentFile not yet available via bridge')
+    return null
   }
 
-  async setAgentFile(agentId: string, fileName: string, content: string): Promise<boolean> {
-    return agentsApi.setAgentFile(this.call.bind(this), agentId, fileName, content)
+  async setAgentFile(_agentId: string, _fileName: string, _content: string): Promise<boolean> {
+    console.warn('[PRSM] setAgentFile not yet available via bridge')
+    return false
   }
 
-  async createAgent(params: agentsApi.CreateAgentParams): Promise<agentsApi.CreateAgentResult> {
-    return agentsApi.createAgent(this.call.bind(this), params)
+  async createAgent(_params: CreateAgentParams): Promise<CreateAgentResult> {
+    console.warn('[PRSM] createAgent not yet available via bridge')
+    throw new Error('createAgent not yet available via bridge')
   }
 
-  async deleteAgent(agentId: string): Promise<agentsApi.DeleteAgentResult> {
-    return agentsApi.deleteAgent(this.call.bind(this), agentId)
+  async deleteAgent(_agentId: string): Promise<DeleteAgentResult> {
+    console.warn('[PRSM] deleteAgent not yet available via bridge')
+    throw new Error('deleteAgent not yet available via bridge')
   }
 
-  // Skills
+  // ── Skills (stubbed) ───────────────────────────────────────────
+
   async listSkills(): Promise<Skill[]> {
-    return skillsApi.listSkills(this.call.bind(this))
+    console.warn('[PRSM] listSkills not yet available via bridge')
+    return []
   }
 
-  async toggleSkill(skillKey: string, enabled: boolean): Promise<void> {
-    return skillsApi.toggleSkill(this.call.bind(this), skillKey, enabled)
+  async toggleSkill(_skillKey: string, _enabled: boolean): Promise<void> {
+    console.warn('[PRSM] toggleSkill not yet available via bridge')
   }
 
-  async installSkill(skillName: string, installId: string): Promise<void> {
-    return skillsApi.installSkill(this.call.bind(this), skillName, installId)
+  async installSkill(_skillName: string, _installId: string): Promise<void> {
+    console.warn('[PRSM] installSkill not yet available via bridge')
   }
 
-  async installHubSkill(slug: string, sessionKey?: string): Promise<void> {
-    return skillsApi.installHubSkill(this.call.bind(this), slug, sessionKey)
+  async installHubSkill(_slug: string, _sessionKey?: string): Promise<void> {
+    console.warn('[PRSM] installHubSkill not yet available via bridge')
   }
 
-  // Cron Jobs
+  // ── Cron Jobs (stubbed) ────────────────────────────────────────
+
   async listCronJobs(): Promise<CronJob[]> {
-    return cronApi.listCronJobs(this.call.bind(this))
+    console.warn('[PRSM] listCronJobs not yet available via bridge')
+    return []
   }
 
-  async toggleCronJob(cronId: string, enabled: boolean): Promise<void> {
-    return cronApi.toggleCronJob(this.call.bind(this), cronId, enabled)
+  async toggleCronJob(_cronId: string, _enabled: boolean): Promise<void> {
+    console.warn('[PRSM] toggleCronJob not yet available via bridge')
   }
 
-  async getCronJobDetails(cronId: string): Promise<CronJob | null> {
-    return cronApi.getCronJobDetails(this.call.bind(this), cronId)
+  async getCronJobDetails(_cronId: string): Promise<CronJob | null> {
+    console.warn('[PRSM] getCronJobDetails not yet available via bridge')
+    return null
   }
 
-  // Config
+  // ── Config (stubbed) ───────────────────────────────────────────
+
   async getServerConfig(): Promise<{ config: any; hash: string }> {
-    return configApi.getServerConfig(this.call.bind(this))
+    console.warn('[PRSM] getServerConfig not yet available via bridge')
+    return { config: null, hash: '' }
   }
 
-  async patchServerConfig(patch: object, baseHash: string): Promise<void> {
-    return configApi.patchServerConfig(this.call.bind(this), patch, baseHash)
+  async patchServerConfig(_patch: object, _baseHash: string): Promise<void> {
+    console.warn('[PRSM] patchServerConfig not yet available via bridge')
   }
 
-  // Usage / status
+  // ── Usage (stubbed) ────────────────────────────────────────────
+
   async getUsageStatus(): Promise<any> {
-    return featuresApi.getUsageStatus(this.call.bind(this))
+    console.warn('[PRSM] getUsageStatus not yet available via bridge')
+    return {}
   }
 
   async getUsageCost(): Promise<any> {
-    return featuresApi.getUsageCost(this.call.bind(this))
+    console.warn('[PRSM] getUsageCost not yet available via bridge')
+    return {}
   }
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+
+function extractAgentIdFromKey(key?: string): string | undefined {
+  if (!key) return undefined
+  const parts = key.split(':')
+  if (parts[0] === 'agent' && parts.length >= 3) return parts[1]
+  return undefined
+}
+
+function isSubagentKey(key?: string): boolean {
+  return !!key && key.includes(':subagent:')
+}
+
+function isCronKey(key?: string): boolean {
+  return !!key && key.includes(':cron:')
+}
+
+// ── Message history parser (extracted from chat.ts) ──────────
+
+interface HistoryToolCall {
+  toolCallId: string
+  name: string
+  phase: 'start' | 'result'
+  result?: string
+  args?: Record<string, unknown>
+  afterMessageId?: string
+}
+
+function parseMessageHistory(rawMessages: any[]): ChatHistoryResult {
+  const toolCalls: HistoryToolCall[] = []
+  let lastAssistantId: string | null = null
+
+  const parsed = rawMessages.map((m: any) => {
+    const msg = m.message || m.data || m.entry || m
+    const role: string = msg.role || m.role || 'assistant'
+    const msgId = msg.id || m.id || m.runId || `history-${Math.random()}`
+    const normalizedRole = role === 'user' ? 'user' : role === 'system' ? 'system' : 'assistant'
+    let rawContent = msg.content ?? msg.body ?? msg.text
+    let content = ''
+    let thinking = msg.thinking
+
+    if (normalizedRole === 'assistant') {
+      lastAssistantId = msgId
+    }
+
+    if (Array.isArray(rawContent)) {
+      content = rawContent
+        .filter((c: any) => c.type === 'text' || c.type === 'input_text' || c.type === 'output_text' || (!c.type && c.text))
+        .map((c: any) => c.text)
+        .filter(Boolean)
+        .join('')
+
+      const thinkingBlock = rawContent.find((c: any) => c.type === 'thinking')
+      if (thinkingBlock) thinking = thinkingBlock.thinking
+
+      for (const c of rawContent) {
+        if (c.type === 'toolCall') {
+          const tcId = c.id || `htc-${Math.random().toString(36).slice(2, 8)}`
+          let args: Record<string, unknown> | undefined
+          if (c.arguments && typeof c.arguments === 'object') {
+            args = c.arguments as Record<string, unknown>
+          } else if (typeof c.arguments === 'string') {
+            try { args = JSON.parse(c.arguments) } catch { /* ignore */ }
+          } else if (c.input && typeof c.input === 'object') {
+            args = c.input as Record<string, unknown>
+          }
+          toolCalls.push({
+            toolCallId: tcId,
+            name: c.name || 'tool',
+            phase: 'result',
+            args,
+            afterMessageId: normalizedRole === 'assistant' ? msgId : lastAssistantId || undefined,
+          })
+        }
+      }
+
+      for (const c of rawContent) {
+        if (c.type === 'toolResult') {
+          const tcId = c.toolCallId || c.tool_use_id || c.id
+          let resultText: string | undefined
+          if (typeof c.content === 'string') {
+            resultText = c.content
+          } else if (Array.isArray(c.content)) {
+            resultText = c.content
+              .filter((b: any) => typeof b?.text === 'string')
+              .map((b: any) => b.text)
+              .join('')
+          }
+          const existing = tcId ? toolCalls.find(t => t.toolCallId === tcId) : null
+          if (existing) {
+            existing.phase = 'result'
+            existing.result = resultText ? stripAnsi(resultText) : undefined
+          } else {
+            toolCalls.push({
+              toolCallId: tcId || `htc-${Math.random().toString(36).slice(2, 8)}`,
+              name: c.name || 'tool',
+              phase: 'result',
+              result: resultText ? stripAnsi(resultText) : undefined,
+              afterMessageId: lastAssistantId || undefined,
+            })
+          }
+        }
+      }
+
+      if (!content) {
+        content = rawContent
+          .map((c: any) => {
+            if (typeof c.text === 'string') return c.text
+            if (c.type === 'toolResult') {
+              if (typeof c.content === 'string') return c.content
+              if (Array.isArray(c.content)) {
+                return c.content.filter((b: any) => typeof b?.text === 'string').map((b: any) => b.text).join('')
+              }
+            }
+            return ''
+          })
+          .filter(Boolean)
+          .join('')
+      }
+    } else if (typeof rawContent === 'object' && rawContent !== null) {
+      content = rawContent.text || rawContent.content || JSON.stringify(rawContent)
+    } else if (typeof rawContent === 'string') {
+      content = rawContent
+    }
+
+    // Heartbeat detection
+    const contentUpper = content.toUpperCase()
+    const isHeartbeat =
+      contentUpper.includes('HEARTBEAT_OK') ||
+      contentUpper.includes('READ HEARTBEAT.MD') ||
+      content.includes('# HEARTBEAT - Event-Driven Status') ||
+      contentUpper.includes('CRON: HEARTBEAT')
+    if (isHeartbeat) {
+      if (role === 'user') return null
+      content = '\u2764\uFE0F'
+    }
+
+    if (role === 'user') {
+      const lower = content.toLowerCase()
+      if (lower.includes('a scheduled reminder has been triggered') || lower.includes('scheduled update')) {
+        return null
+      }
+    }
+
+    if (content.trim() === 'NO_REPLY' || content.trim() === 'no_reply') return null
+    if (role === 'toolResult') return null
+
+    content = stripSystemNotifications(content).trim()
+    if (role === 'user') {
+      content = stripConversationMetadata(content).trim()
+    }
+
+    let mediaImages: Array<{ url: string; alt?: string }> | undefined
+    if (normalizedRole === 'assistant' && content.includes('MEDIA:')) {
+      const parsed = parseMediaTokens(content)
+      content = parsed.cleanText
+      if (parsed.images.length > 0) mediaImages = parsed.images
+    }
+
+    if (!content && !mediaImages && normalizedRole !== 'assistant') return null
+
+    return {
+      id: msgId,
+      role: normalizedRole,
+      content: stripAnsi(content),
+      thinking: thinking ? stripAnsi(thinking) : thinking,
+      timestamp: new Date(msg.timestamp || m.timestamp || msg.ts || m.ts || msg.createdAt || m.createdAt || Date.now()).toISOString(),
+      ...(mediaImages ? { mediaImages } : {})
+    } as Message
+  })
+
+  const filteredMessages = parsed.filter((m): m is Message => m !== null)
+
+  // Merge consecutive empty assistant messages
+  for (let i = filteredMessages.length - 1; i > 0; i--) {
+    const curr = filteredMessages[i]
+    const prev = filteredMessages[i - 1]
+    if (curr.role === 'assistant' && prev.role === 'assistant' && !curr.content.trim()) {
+      for (const tc of toolCalls) {
+        if (tc.afterMessageId === curr.id) tc.afterMessageId = prev.id
+      }
+      filteredMessages.splice(i, 1)
+    }
+  }
+
+  // Anchor orphaned tool calls
+  for (const tc of toolCalls) {
+    if (!tc.afterMessageId) {
+      const lastAssistant = filteredMessages.filter(m => m.role === 'assistant').pop()
+      if (lastAssistant) tc.afterMessageId = lastAssistant.id
+    }
+  }
+
+  return { messages: filteredMessages, toolCalls }
 }

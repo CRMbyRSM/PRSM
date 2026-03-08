@@ -24,6 +24,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update:error', (_e, err) => cb(err))
   },
   updateSyncPolicy: (policy: string, lastCheck: number) => ipcRenderer.invoke('update:syncPolicy', policy, lastCheck),
+  getRuntimeInfo: () => ipcRenderer.invoke('runtime:getInfo'),
+  readWorkspaceFile: (path: string) => ipcRenderer.invoke('workspace:readFile', path),
+  writeWorkspaceFile: (path: string, content: string) => ipcRenderer.invoke('workspace:writeFile', path, content),
   openSubagentPopout: (params: { sessionKey: string; serverUrl: string; authToken: string; authMode: string; label: string }) =>
     ipcRenderer.invoke('subagent:openPopout', params),
   openToolCallPopout: (params: { toolCallId: string; name: string }) =>
@@ -51,6 +54,9 @@ declare global {
       onUpdateDownloaded: (cb: () => void) => void
       onUpdateError: (cb: (err: string) => void) => void
       updateSyncPolicy: (policy: string, lastCheck: number) => Promise<void>
+      getRuntimeInfo: () => Promise<{ mode: 'desktop'; platform: string; bridgeAvailable: boolean; appVersion: string; workspaceRoot: string | null }>
+      readWorkspaceFile: (path: string) => Promise<{ ok: boolean; path: string; content: string; missing: boolean }>
+      writeWorkspaceFile: (path: string, content: string) => Promise<{ ok: boolean; path: string }>
       openSubagentPopout: (params: { sessionKey: string; serverUrl: string; authToken: string; authMode: string; label: string }) => Promise<void>
       openToolCallPopout: (params: { toolCallId: string; name: string }) => Promise<void>
       invoke: (channel: string, ...args: unknown[]) => Promise<unknown>

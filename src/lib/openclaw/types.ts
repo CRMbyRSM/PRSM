@@ -1,4 +1,4 @@
-// OpenClaw Protocol v3 - Type Definitions
+// OpenClaw Protocol - Type Definitions (Bridge transport)
 
 export interface Message {
   id: string
@@ -71,7 +71,6 @@ export interface Skill {
   triggers: string[]
   enabled?: boolean
   content?: string
-  // Extended metadata from skills.status
   emoji?: string
   homepage?: string
   source?: string
@@ -94,49 +93,9 @@ export interface CronJob {
   content?: string
 }
 
-export interface RequestFrame {
-  type: 'req'
-  id: string
-  method: string
-  params?: any
-}
-
-export interface ResponseFrame {
-  type: 'res'
-  id: string
-  ok: boolean
-  payload?: any
-  error?: {
-    code: string
-    message: string
-    details?: any
-  }
-}
-
-export interface EventFrame {
-  type: 'event'
-  event: string
-  payload?: any
-}
-
 export type EventHandler = (...args: unknown[]) => void
 
-export type RpcCaller = <T = any>(method: string, params?: any, options?: { timeoutMs?: number }) => Promise<T>
-
-/** Minimal interface that both native WebSocket and NativeWebSocketWrapper satisfy. */
-export interface WebSocketLike {
-  readyState: number
-  onopen: ((ev: any) => void) | null
-  onclose: ((ev: any) => void) | null
-  onerror: ((ev: any) => void) | null
-  onmessage: ((ev: any) => void) | null
-  send(data: string): void
-  close(): void
-  readonly CONNECTING: number
-  readonly OPEN: number
-  readonly CLOSING: number
-  readonly CLOSED: number
+export interface BridgeConfig {
+  bridgeUrl: string
+  bridgeToken: string
 }
-
-/** Factory function that creates a WebSocket-like connection for the given URL. */
-export type WebSocketFactory = (url: string) => WebSocketLike

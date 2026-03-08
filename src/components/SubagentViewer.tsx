@@ -22,12 +22,11 @@ export function SubagentViewer({
   sessionKey,
   serverUrl,
   authToken,
-  authMode
 }: {
   sessionKey: string
   serverUrl: string
   authToken: string
-  authMode: 'token' | 'password'
+  authMode?: string  // kept for interface compat but unused
 }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [streamingText, setStreamingText] = useState('')
@@ -42,7 +41,7 @@ export function SubagentViewer({
   }, [messages, streamingText, toolCalls])
 
   useEffect(() => {
-    const client = new OpenClawClient(serverUrl, authToken, authMode)
+    const client = new OpenClawClient(serverUrl, authToken)
     clientRef.current = client
 
     client.setPrimarySessionKey(sessionKey)
@@ -127,7 +126,7 @@ export function SubagentViewer({
       client.disconnect()
       clientRef.current = null
     }
-  }, [sessionKey, serverUrl, authToken, authMode])
+  }, [sessionKey, serverUrl, authToken])
 
   const filteredMessages = useMemo(
     () => messages.filter((m) => m.role !== 'system'),

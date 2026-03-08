@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { safe } from '../lib/safe-render'
+import * as Platform from '../lib/platform'
 
 interface WorkspaceFileItem {
   id: string
@@ -107,10 +108,31 @@ export function WorkspaceView() {
 
   useEffect(() => {
     const loadContent = async () => {
-      if (!client || !selectedItem) return
+      if (!selectedItem) return
       setLoadingContent(true)
       setSaveState('idle')
       try {
+        const bridgePath = getWorkspaceBridgePath(selectedItem)
+        const canUseBridge = Platform.isDesktopBridgeAvailable() && bridgePath !== null
+
+        if (canUseBridge) {
+          const bridgeResult = await Platform.readWorkspaceFile(bridgePath).catch(() => null)
+          if (bridgeResult) {
+            const content = bridgeResult.content || ''
+            setSelectedContent(content)
+            setSavedContent(content)
+            setSelectedMissing(Boolean(bridgeResult.missing))
+            return
+          }
+        }
+
+        if (!client) {
+          setSelectedContent('')
+          setSavedContent('')
+          setSelectedMissing(true)
+          return
+        }
+
         const result = await client.getAgentFile(selectedItem.agentId, selectedItem.fileName)
         const content = result?.content || ''
         setSelectedContent(content)
@@ -140,11 +162,22 @@ export function WorkspaceView() {
   }
 
   const handleSave = async () => {
-    if (!client || !selectedItem) return
+    if (!selectedItem) return
     setSaving(true)
     setSaveState('idle')
     try {
-      const ok = await client.setAgentFile(selectedItem.agentId, selectedItem.fileName, selectedContent)
+      let ok = false
+
+      const bridgePath = getWorkspaceBridgePath(selectedItem)
+      if (Platform.isDesktopBridgeAvailable() && bridgePath !== null) {
+        const bridgeResult = await Platform.writeWorkspaceFile(bridgePath, selectedContent).catch(() => null)
+        ok = Boolean(bridgeResult?.ok)
+      }
+
+      if (!ok && client) {
+        ok = await client.setAgentFile(selectedItem.agentId, selectedItem.fileName, selectedContent)
+      }
+
       setSaveState(ok ? 'saved' : 'error')
       if (ok) {
         setSavedContent(selectedContent)
@@ -282,6 +315,12 @@ export function WorkspaceView() {
       </div>
     </div>
   )
+}
+
+function getWorkspaceBridgePath(item: WorkspaceFileItem): string | null {
+  if (item.group === 'skills') return null
+  if (item.path && item.path.trim()) return item.path
+  return item.fileName
 }
 
 function itemsFromState(
