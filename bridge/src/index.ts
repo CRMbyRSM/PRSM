@@ -93,6 +93,9 @@ async function start(): Promise<void> {
 
       assertAuth(req, config.bridgeToken)
 
+      // Request logging
+      console.log(`[prsm-bridge] ${req.method} ${pathname}`)
+
       if (req.method === 'GET' && pathname === '/runtime') {
         sendJson(res, {
           ok: true,
@@ -170,7 +173,11 @@ async function start(): Promise<void> {
           parsedResult = gatewayResult.trim()
         }
 
-        sendJson(res, { ok: true, requestId, sessionKey, messages: parsedResult }, { corsOrigin: config.corsOrigin })
+        // Gateway chat.history returns { sessionKey, sessionId, messages: [...], thinkingLevel }
+        // Unwrap so the client gets { ok, requestId, sessionKey, messages: [...] }
+        const historyData = parsedResult as Record<string, unknown> | null
+        const messagesArray = historyData?.messages ?? parsedResult
+        sendJson(res, { ok: true, requestId, sessionKey, messages: messagesArray }, { corsOrigin: config.corsOrigin })
         return
       }
 
@@ -195,7 +202,7 @@ async function start(): Promise<void> {
         const params: JsonRecord = {
           sessionKey,
           message: content,
-          deliver: false,
+          deliver: true,
           idempotencyKey: typeof body.idempotencyKey === 'string' ? body.idempotencyKey : randomUUID()
         }
 
