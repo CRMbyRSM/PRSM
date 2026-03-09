@@ -2,7 +2,7 @@ import { createServer, IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { URL } from 'node:url'
 import { loadConfig } from './config'
-import { readWorkspaceFile, writeWorkspaceFile } from './workspace'
+import { listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile } from './workspace'
 
 type JsonRecord = Record<string, unknown>
 
@@ -146,6 +146,70 @@ async function start(): Promise<void> {
         return
       }
 
+      // --- Generic Gateway Proxy (Agents, Skills, Crons, Config) ---
+      const proxyMap: Record<string, string> = {
+        '/agents': 'agents.list',
+        '/skills': 'skills.list',
+        '/cron-jobs': 'cron.list',
+        '/config': 'config.get'
+      }
+
+      if (req.method === 'GET' && proxyMap[pathname]) {
+        const method = proxyMap[pathname]
+        const { execFile } = await import('node:child_process')
+        const gatewayResult = await new Promise<string>((resolve, reject) => {
+          execFile(
+            'openclaw',
+            ['gateway', 'call', method, '--json'],
+            { cwd: '/home/riktanius/.openclaw/workspace', env: process.env, timeout: 30000 },
+            (error, stdout, stderr) => {
+              if (error) {
+                reject(new Error((stderr || stdout || error.message).trim()))
+                return
+              }
+              resolve(stdout)
+            }
+          )
+        })
+
+        try {
+          let parsed = JSON.parse(gatewayResult)
+
+          if (pathname === '/agents') {
+            const rawAgents = Array.isArray((parsed as any)?.agents) ? (parsed as any).agents : []
+            parsed = rawAgents.map((a: any) => ({
+              id: a.id,
+              name: a.name || a.id,
+              description: a.description || '',
+              status: 'online',
+              emoji: a.emoji,
+              model: a.model,
+              configured: true
+            }))
+          }
+
+          if (pathname === '/cron-jobs') {
+            const rawJobs = Array.isArray((parsed as any)?.jobs) ? (parsed as any).jobs : []
+            parsed = rawJobs.map((j: any) => ({
+              id: j.id,
+              name: j.name || j.id,
+              schedule: j.schedule?.expr || j.schedule?.kind || 'unknown',
+              nextRun: j.nextRunAt
+                ? new Date(j.nextRunAt).toISOString()
+                : computeNextCronRun(j.schedule?.expr, j.schedule?.tz),
+              status: j.enabled ? 'active' : 'paused',
+              description: j.payload?.message || '',
+              lastRunAt: j.lastRunAt ? new Date(j.lastRunAt).toISOString() : undefined
+            }))
+          }
+
+          sendJson(res, { ok: true, requestId, result: parsed }, { corsOrigin: config.corsOrigin })
+        } catch {
+          sendJson(res, { ok: false, error: 'Failed to parse gateway response' }, { status: 500, corsOrigin: config.corsOrigin })
+        }
+        return
+      }
+
       const sessionMessagesMatch = pathname.match(/^\/sessions\/([^/]+)\/messages$/)
       if (req.method === 'GET' && sessionMessagesMatch) {
         const sessionKey = decodeURIComponent(sessionMessagesMatch[1])
@@ -238,6 +302,12 @@ async function start(): Promise<void> {
         return
       }
 
+      if (req.method === 'GET' && pathname === '/workspace/files') {
+        const files = await listWorkspaceFiles(config.workspaceRoot)
+        sendJson(res, { ok: true, requestId, files }, { corsOrigin: config.corsOrigin })
+        return
+      }
+
       if (req.method === 'GET' && pathname === '/workspace/file') {
         const targetPath = url.searchParams.get('path') || ''
         if (!targetPath) {
@@ -286,6 +356,86 @@ async function start(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log(`[prsm-bridge] workspace: ${config.workspaceRoot}`)
   })
+}
+
+/**
+ * Compute the next run time for a simple cron expression.
+ * Supports standard 5-field cron (min hour dom month dow).
+ * Returns ISO string or undefined if unparseable.
+ */
+function computeNextCronRun(expr?: string, tz?: string): string | undefined {
+  if (!expr || typeof expr !== 'string') return undefined
+
+  const parts = expr.trim().split(/\s+/)
+  if (parts.length !== 5) return undefined
+
+  const [minPart, hourPart, domPart, monPart, dowPart] = parts
+
+  function parseField(field: string, min: number, max: number): number[] | null {
+    if (field === '*') return null // means "all"
+    const values: number[] = []
+    for (const segment of field.split(',')) {
+      const stepMatch = segment.match(/^(\*|\d+-\d+)\/(\d+)$/)
+      if (stepMatch) {
+        const step = parseInt(stepMatch[2], 10)
+        let rangeStart = min
+        let rangeEnd = max
+        if (stepMatch[1] !== '*') {
+          const [rs, re] = stepMatch[1].split('-').map(Number)
+          rangeStart = rs
+          rangeEnd = re
+        }
+        for (let i = rangeStart; i <= rangeEnd; i += step) values.push(i)
+        continue
+      }
+      const rangeMatch = segment.match(/^(\d+)-(\d+)$/)
+      if (rangeMatch) {
+        const start = parseInt(rangeMatch[1], 10)
+        const end = parseInt(rangeMatch[2], 10)
+        for (let i = start; i <= end; i++) values.push(i)
+        continue
+      }
+      const num = parseInt(segment, 10)
+      if (!isNaN(num) && num >= min && num <= max) values.push(num)
+    }
+    return values.length > 0 ? values : null
+  }
+
+  try {
+    const minutes = parseField(minPart, 0, 59)
+    const hours = parseField(hourPart, 0, 23)
+    const doms = parseField(domPart, 1, 31)
+    const months = parseField(monPart, 1, 12)
+    const dows = parseField(dowPart, 0, 6)
+
+    // Start from now, scan forward up to 7 days
+    const now = new Date()
+    const maxLookahead = 7 * 24 * 60 // 7 days in minutes
+
+    for (let offset = 1; offset <= maxLookahead; offset++) {
+      const candidate = new Date(now.getTime() + offset * 60000)
+      // Zero out seconds/ms
+      candidate.setSeconds(0, 0)
+
+      const min = candidate.getMinutes()
+      const hour = candidate.getHours()
+      const dom = candidate.getDate()
+      const mon = candidate.getMonth() + 1
+      const dow = candidate.getDay()
+
+      if (minutes && !minutes.includes(min)) continue
+      if (hours && !hours.includes(hour)) continue
+      if (doms && !doms.includes(dom)) continue
+      if (months && !months.includes(mon)) continue
+      if (dows && !dows.includes(dow)) continue
+
+      return candidate.toISOString()
+    }
+  } catch {
+    // Parse error — return undefined
+  }
+
+  return undefined
 }
 
 start().catch((error) => {

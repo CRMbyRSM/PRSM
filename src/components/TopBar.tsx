@@ -16,10 +16,6 @@ export function TopBar() {
     connected,
     agentBusy,
     isStreaming,
-    activeSubagents,
-    mainView,
-    openSystemView,
-    openWorkspaceView,
     setShowSettings,
     updateSessionLabel
   } = useStore()
@@ -112,15 +108,7 @@ export function TopBar() {
         )}
       </div>
 
-      <div className="topbar-surface-jumps">
-        <button className={`surface-jump-btn ${mainView === 'system' ? 'active' : ''}`} onClick={openSystemView}>
-          <span className={`surface-jump-dot ${!connected ? 'critical' : isStreaming || agentBusy || activeSubagents.length > 0 ? 'warn' : 'ok'}`} />
-          System
-        </button>
-        <button className={`surface-jump-btn ${mainView === 'workspace' ? 'active' : ''}`} onClick={openWorkspaceView}>
-          Workspace
-        </button>
-      </div>
+
 
       <div className="top-bar-actions">
         <div className="thinking-toggle">

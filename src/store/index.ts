@@ -892,6 +892,7 @@ export const useStore = create<AppState>()(
 
             let replacedStreaming = false
             set((state) => {
+              // Case 1: Replace the last streaming-* assistant message (most common path)
               const lastIdx = state.messages.length - 1
               const lastMsg = lastIdx >= 0 ? state.messages[lastIdx] : null
               if (lastMsg && lastMsg.role === 'assistant' && lastMsg.id.startsWith('streaming-')) {
@@ -900,10 +901,34 @@ export const useStore = create<AppState>()(
                 messages[lastIdx] = message
                 return { messages, isStreaming: false }
               }
+
+              // Case 2: Find ANY streaming-* assistant message in the array (edge case:
+              // user message arrived between streaming and final message event)
+              const streamingIdx = state.messages.findIndex(m => m.role === 'assistant' && m.id.startsWith('streaming-'))
+              if (streamingIdx >= 0) {
+                replacedStreaming = true
+                const messages = [...state.messages]
+                messages[streamingIdx] = message
+                return { messages, isStreaming: false }
+              }
+
+              // Case 3: Update existing message by id
               const exists = state.messages.some(m => m.id === message.id)
               if (exists) {
                 return { messages: state.messages.map(m => m.id === message.id ? message : m), isStreaming: false }
               }
+
+              // Case 4: Dedup by content — check against ALL assistant messages, not just the last
+              const incomingContent = (message.content || '').trim()
+              if (message.role === 'assistant' && incomingContent) {
+                const hasSameContent = state.messages.some(m =>
+                  m.role === 'assistant' && (m.content || '').trim() === incomingContent
+                )
+                if (hasSameContent) {
+                  return { isStreaming: false }
+                }
+              }
+
               return { messages: [...state.messages, message as Message], isStreaming: false }
             })
 

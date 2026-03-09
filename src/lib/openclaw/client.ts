@@ -132,11 +132,11 @@ export class OpenClawClient {
         return {
           id: key || `session-${Math.random()}`,
           key,
-          title: s.title || s.label || key || 'New Chat',
+          title: humanizeSessionTitle(s, key),
           agentId: s.agentId || extractAgentIdFromKey(key),
           createdAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
           updatedAt: new Date(s.updatedAt || s.createdAt || Date.now()).toISOString(),
-          lastMessage: s.lastMessagePreview || s.lastMessage,
+          lastMessage: sanitizePreviewText(s.lastMessagePreview || s.lastMessage || ''),
           spawned: s.spawned || isSubagentKey(key) || undefined,
           cron: s.cron || isCronKey(key) || undefined,
           parentSessionId: s.parentSessionId || s.parentKey || s.spawnedBy || undefined
@@ -384,13 +384,26 @@ export class OpenClawClient {
   // ── Agents (stubbed — bridge doesn't support yet) ──────────────
 
   async listAgents(): Promise<Agent[]> {
-    console.warn('[PRSM] listAgents not yet available via bridge')
-    return []
+    try {
+      const data = await this.bridgeFetch<any>('/agents')
+      return Array.isArray(data?.result) ? data.result : []
+    } catch (err) {
+      console.warn('[PRSM] listAgents failed:', err)
+      return [{
+        id: 'main',
+        name: 'Main Agent',
+        status: 'online',
+        emoji: '🦞',
+        description: 'Default OpenClaw system agent'
+      }]
+    }
   }
 
   async getAgentIdentity(_agentId: string): Promise<{ name?: string; emoji?: string; avatar?: string; avatarUrl?: string } | null> {
-    console.warn('[PRSM] getAgentIdentity not yet available via bridge')
-    return null
+    const agents = await this.listAgents()
+    const agent = agents.find(a => a.id === _agentId)
+    if (!agent) return null
+    return { name: agent.name, emoji: agent.emoji, avatar: agent.avatar }
   }
 
   async getAgentFiles(_agentId: string): Promise<{ workspace: string; files: Array<{ name: string; path: string; missing: boolean; size?: number }> } | null> {
@@ -420,9 +433,35 @@ export class OpenClawClient {
 
   // ── Skills (stubbed) ───────────────────────────────────────────
 
+  async listWorkspaceFiles(): Promise<Array<{ path: string; name: string; group: 'core' | 'projects' | 'skills'; description?: string }>> {
+    try {
+      const data = await this.bridgeFetch<any>('/workspace/files')
+      return Array.isArray(data?.files) ? data.files : []
+    } catch (err) {
+      console.warn('[PRSM] listWorkspaceFiles failed:', err)
+      return []
+    }
+  }
+
   async listSkills(): Promise<Skill[]> {
-    console.warn('[PRSM] listSkills not yet available via bridge')
-    return []
+    try {
+      const data = await this.bridgeFetch<any>('/workspace/files')
+      const files = Array.isArray(data?.files) ? data.files : []
+      return files
+        .filter((f: any) => f.group === 'skills')
+        .map((f: any) => ({
+          id: f.path,
+          name: f.name,
+          description: f.description || f.path,
+          triggers: [],
+          enabled: true,
+          filePath: f.path,
+          source: 'workspace'
+        }))
+    } catch (err) {
+      console.warn('[PRSM] listSkills failed:', err)
+      return []
+    }
   }
 
   async toggleSkill(_skillKey: string, _enabled: boolean): Promise<void> {
@@ -440,8 +479,13 @@ export class OpenClawClient {
   // ── Cron Jobs (stubbed) ────────────────────────────────────────
 
   async listCronJobs(): Promise<CronJob[]> {
-    console.warn('[PRSM] listCronJobs not yet available via bridge')
-    return []
+    try {
+      const data = await this.bridgeFetch<any>('/cron-jobs')
+      return Array.isArray(data?.result) ? data.result : []
+    } catch (err) {
+      console.warn('[PRSM] listCronJobs failed:', err)
+      return []
+    }
   }
 
   async toggleCronJob(_cronId: string, _enabled: boolean): Promise<void> {
@@ -449,15 +493,20 @@ export class OpenClawClient {
   }
 
   async getCronJobDetails(_cronId: string): Promise<CronJob | null> {
-    console.warn('[PRSM] getCronJobDetails not yet available via bridge')
-    return null
+    const jobs = await this.listCronJobs()
+    return jobs.find(j => j.id === _cronId) || null
   }
 
   // ── Config (stubbed) ───────────────────────────────────────────
 
   async getServerConfig(): Promise<{ config: any; hash: string }> {
-    console.warn('[PRSM] getServerConfig not yet available via bridge')
-    return { config: null, hash: '' }
+    try {
+      const data = await this.bridgeFetch<any>('/config')
+      return { config: data?.result?.config || {}, hash: data?.result?.hash || '' }
+    } catch (err) {
+      console.warn('[PRSM] getServerConfig failed:', err)
+      return { config: null, hash: '' }
+    }
   }
 
   async patchServerConfig(_patch: object, _baseHash: string): Promise<void> {
@@ -492,6 +541,38 @@ function isSubagentKey(key?: string): boolean {
 
 function isCronKey(key?: string): boolean {
   return !!key && key.includes(':cron:')
+}
+
+function humanizeSessionTitle(session: any, key?: string): string {
+  if (session?.groupChannel) {
+    return `Discord: ${String(session.groupChannel).replace(/^#/, '').replace(/\b\w/g, (c: string) => c.toUpperCase())}`
+  }
+
+  const raw = String(session?.displayName || session?.derivedTitle || session?.title || session?.label || key || 'New Chat')
+
+  if (key === 'agent:main:main') return 'Main Session'
+  if (key === 'agent:main:heartbeat') return 'Heartbeat'
+
+  const discordMatch = raw.match(/discord:[^#]+#(.+)$/i)
+  if (discordMatch) {
+    const channel = discordMatch[1].trim()
+    return `Discord: ${channel.replace(/\b\w/g, (c: string) => c.toUpperCase())}`
+  }
+
+  const cronMatch = key?.match(/:cron:([^:]+)$/)
+  if (session?.name && key?.includes(':cron:')) return `Cron: ${session.name}`
+  if (cronMatch && session?.label) return String(session.label)
+
+  return raw.length > 80 ? `${raw.slice(0, 77)}...` : raw
+}
+
+function sanitizePreviewText(text: string): string {
+  if (!text) return ''
+  return text
+    .replace(/Sender \(untrusted metadata\):[\s\S]*?```/g, '')
+    .replace(/```json[\s\S]*?```/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 // ── Message history parser (extracted from chat.ts) ──────────

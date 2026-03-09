@@ -104,7 +104,7 @@ export function Sidebar() {
 
   // Filter out spawned subagent sessions, system sessions, and deduplicate by key.
   const visibleSessions = useMemo(() => {
-    const systemSessionRe = /^agent:[^:]+:(main|cron)(:|$)/
+    const systemSessionRe = /^agent:[^:]+:(cron|heartbeat)(:|$)/
     const seen = new Set<string>()
     return sessions.filter(s => {
       const key = sessionKeyOf(s)
@@ -411,7 +411,7 @@ export function Sidebar() {
             x={contextMenu.x}
             y={contextMenu.y}
             sessionId={contextMenu.sessionId}
-            isSystemSession={/^agent:[^:]+:(main|cron)(:|$)/.test(contextMenu.sessionId)}
+            isSystemSession={/^agent:[^:]+:(cron|heartbeat)(:|$)/.test(contextMenu.sessionId)}
             onRename={() => setShowRenameModal(true)}
             onDelete={() => {
               deleteSession(contextMenu.sessionId)
@@ -567,7 +567,7 @@ function SessionItem({
       {unreadCount > 0 && (
         <span className="session-badge">{unreadCount}</span>
       )}
-      {!/^agent:[^:]+:(main|cron)(:|$)/.test(sessionKey) && (
+      {!/^agent:[^:]+:(cron|heartbeat)(:|$)/.test(sessionKey) && (
         <button
           className="session-delete"
           onClick={(e) => {

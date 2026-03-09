@@ -13,30 +13,13 @@ interface WorkspaceFileItem {
   description?: string
 }
 
-const CORE_FILES = [
-  'SOUL.md',
-  'AGENTS.md',
-  'MEMORY.md',
-  'TOOLS.md',
-  'USER.md',
-  'IDENTITY.md',
-  'HEARTBEAT.md',
-  'ACTIVE-WORK.md',
-  'WORKFLOW_AUTO.md'
-]
-
 export function WorkspaceView() {
   const {
     client,
-    agents,
-    skills,
-    currentAgentId,
-    openServerSettings,
-    fetchAgents,
-    fetchSkills
+    openServerSettings
   } = useStore()
 
-  const [agentFiles, setAgentFiles] = useState<Record<string, Array<{ name: string; path: string; missing: boolean; size?: number }>>>({})
+  const [workspaceFiles, setWorkspaceFiles] = useState<Array<{ path: string; name: string; group: 'core' | 'projects' | 'skills'; description?: string }>>([])
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [selectedContent, setSelectedContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
@@ -51,7 +34,8 @@ export function WorkspaceView() {
   const editorRef = useRef<HTMLTextAreaElement>(null)
 
   const isDirty = selectedContent !== savedContent
-  const selectedItem = useMemo(() => itemsFromState(agents, skills, agentFiles, currentAgentId).find((item) => item.id === selectedItemId) || null, [agents, skills, agentFiles, currentAgentId, selectedItemId])
+  const items = useMemo(() => itemsFromWorkspaceFiles(workspaceFiles), [workspaceFiles])
+  const selectedItem = useMemo(() => items.find((item) => item.id === selectedItemId) || null, [items, selectedItemId])
 
   useEffect(() => {
     if (!client) return
@@ -59,30 +43,16 @@ export function WorkspaceView() {
     const load = async () => {
       setLoadingList(true)
       try {
-        await Promise.all([fetchAgents(), fetchSkills()])
-        const currentAgents = useStore.getState().agents
-        if (cancelled || currentAgents.length === 0) return
-        const entries = await Promise.all(
-          currentAgents.map(async (agent) => ({
-            agentId: agent.id,
-            result: await client.getAgentFiles(agent.id).catch(() => null)
-          }))
-        )
+        const files = await client.listWorkspaceFiles()
         if (cancelled) return
-        const next: Record<string, Array<{ name: string; path: string; missing: boolean; size?: number }>> = {}
-        for (const entry of entries) {
-          next[entry.agentId] = entry.result?.files || []
-        }
-        setAgentFiles(next)
+        setWorkspaceFiles(files)
       } finally {
         if (!cancelled) setLoadingList(false)
       }
     }
     load()
     return () => { cancelled = true }
-  }, [client, fetchAgents, fetchSkills])
-
-  const items = useMemo(() => itemsFromState(agents, skills, agentFiles, currentAgentId), [agents, skills, agentFiles, currentAgentId])
+  }, [client])
 
   const groupedItems = useMemo(() => {
     const q = filter.trim().toLowerCase()
@@ -318,66 +288,22 @@ export function WorkspaceView() {
 }
 
 function getWorkspaceBridgePath(item: WorkspaceFileItem): string | null {
-  if (item.group === 'skills') return null
   if (item.path && item.path.trim()) return item.path
   return item.fileName
 }
 
-function itemsFromState(
-  agents: ReturnType<typeof useStore.getState>['agents'],
-  skills: ReturnType<typeof useStore.getState>['skills'],
-  agentFiles: Record<string, Array<{ name: string; path: string; missing: boolean; size?: number }>>,
-  currentAgentId: string | null
+function itemsFromWorkspaceFiles(
+  files: Array<{ path: string; name: string; group: 'core' | 'projects' | 'skills'; description?: string }>
 ): WorkspaceFileItem[] {
-  const list: WorkspaceFileItem[] = []
-  const primaryAgent = agents.find((agent) => agent.id === currentAgentId) || agents[0]
-
-  if (primaryAgent) {
-    for (const fileName of CORE_FILES) {
-      list.push({
-        id: `core:${primaryAgent.id}:${fileName}`,
-        label: fileName,
-        group: 'core',
-        agentId: primaryAgent.id,
-        fileName,
-        description: 'Core context doc'
-      })
-    }
-  }
-
-  for (const agent of agents) {
-    const files = agentFiles[agent.id] || []
-    for (const file of files) {
-      if (file.name.startsWith('memory/projects/')) {
-        list.push({
-          id: `project:${agent.id}:${file.name}`,
-          label: file.name.replace('memory/projects/', ''),
-          group: 'projects',
-          agentId: agent.id,
-          fileName: file.name,
-          path: file.path,
-          description: agent.name
-        })
-      }
-    }
-  }
-
-  for (const skill of skills) {
-    if (skill.filePath && skill.filePath.includes('/skills/')) {
-      const derivedName = skill.filePath.split('/skills/')[1] || skill.name
-      list.push({
-        id: `skill:${skill.id}`,
-        label: derivedName,
-        group: 'skills',
-        agentId: primaryAgent?.id || 'main',
-        fileName: skill.filePath,
-        path: skill.filePath,
-        description: skill.name
-      })
-    }
-  }
-
-  return list
+  return files.map((file) => ({
+    id: `${file.group}:${file.path}`,
+    label: file.group === 'projects' ? file.name.replace(/\.md$/i, '') : file.name,
+    group: file.group,
+    agentId: 'main',
+    fileName: file.name,
+    path: file.path,
+    description: file.description || file.group
+  }))
 }
 
 function WorkspaceGroup({
